@@ -112,7 +112,7 @@ sequenceDiagram
             Note over Engine,Router: Step 6 — Resolve Target Subscriptions
             Engine->>Router: findSubscriptions(protocolDefinitionId, target)
             Router->>DB: query target_subscription + receiver_adaptor
-            DB-->>Router: List&lt;TargetSubscription&gt; with adaptors
+            DB-->>Router: TargetSubscription list with adaptors
             Router-->>Engine: [Adaptor #1, Adaptor #2]
 
             Note over Engine,Dispatcher: Step 7 — Fan-Out Delivery

@@ -8,7 +8,7 @@ The **CCE Intelligence Service** is the delivery engine of the CCE platform. It 
 
 ```mermaid
 graph TB
-    subgraph External
+    subgraph Dependent Services
         GATEWAY["CCE Gateway Service<br/>(Auth & Routing)"]
         RECEIVER_WH["Receiver Adaptors<br/>(Webhook endpoints)"]
     end
@@ -282,7 +282,7 @@ flowchart TD
 
 ### 4.1 Intelligence Actions in PlanDefinition
 
-Intelligence rules are modeled as **nested sub-actions** within a PlanDefinition step action (`action.action[]`). The Compliance Service evaluates these conditions and publishes triggers when they match. The Intelligence Service re-evaluates the same rules to determine which specific sub-action fired and to resolve the `definitionCanonical` needed for routing and template rendering.
+Intelligence actions are modeled as **nested sub-actions** within a PlanDefinition step action (`action.action[]`). The Compliance Service evaluates these conditions and publishes triggers when they match. The Intelligence Service re-evaluates the same conditions to determine which specific sub-action fired and to resolve the `definitionCanonical` needed for routing and template rendering.
 
 ```json
 {
