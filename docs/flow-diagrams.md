@@ -179,20 +179,6 @@ flowchart TD
     E -.-> R1 & R2 & R3 & R4 & R5 & R6
 ```
 
-### ActionEvaluationContext Variable Computation
-
-```mermaid
-flowchart LR
-    SI[StepInstance] -->|state| stepState
-    SI -->|due_date, now| daysOverdue["daysOverdue<br/>= daysBetween(dueDate, now)"]
-    SI -->|missed_date, now| daysPastMissedDate["daysPastMissedDate<br/>= daysBetween(missedDate, now)"]
-    SI -->|required_behavior| requiredBehavior
-    SI -->|completion_status| completionStatus
-    D[Trigger Event] -->|deviationType| deviationType["deviationType<br/>(null for late completion)"]
-    PD[PlanDefinition<br/>sub-action extension] -->|intelligence-severity| severity
-    PD -->|intelligence-target| target
-```
-
 ---
 
 ## 4. Target Subscription Routing
@@ -289,9 +275,9 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    AD[ActionDefinition<br/>.definition JSONB<br/>(FHIR extension)] --> TR[TemplateRenderer]
-    RC[ActionEvaluationContext<br/>variables] --> TR
-    TE[TriggerEvent<br/>fields] --> TR
+    AD["ActionDefinition .definition JSONB (FHIR extension)"] --> TR[TemplateRenderer]
+    RC["ActionEvaluationContext variables"] --> TR
+    TE["TriggerEvent fields"] --> TR
     TR --> P[Rendered Payload JSON]
     P --> H[HTTP POST Body]
 
