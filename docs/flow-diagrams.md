@@ -147,7 +147,7 @@ How intelligence actions are extracted from PlanDefinition and evaluated using J
 ```mermaid
 flowchart TD
     A[Load PlanDefinition from protocol_definition.definition] --> B[Find action matching trigger's actionId]
-    B --> C[Extract nested sub-actions (intelligence action)<br/>where condition.language = text/jsonlogic]
+    B --> C[Extract nested sub-actions (intelligence action) <br/>where condition.language = text/jsonlogic]
     C --> D{Intelligence action found?}
     D -->|No| Z[Skip — no intelligence actions for this step]
     D -->|Yes| E[Build ActionEvaluationContext]
