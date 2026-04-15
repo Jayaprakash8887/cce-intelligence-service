@@ -63,7 +63,7 @@ graph TB
 
 ## 1.1 Compliance Service Contract
 
-The **CCE Compliance Service** (v1.1.0+) is the upstream publisher. When a step deviation is detected (OVERDUE/MISSED) or a step is completed with certain conditions, the Compliance Service's `IntelligenceActionEvaluator` evaluates PlanDefinition intelligence actions, creates `ActionRun` records (TRIGGERED → PUBLISHED), and publishes `IntelligenceTriggerEvent` messages to `cce.intelligence.triggers`.
+The **CCE Compliance Service** (v1.1.0+) is the upstream publisher. When a step's status changes, the Compliance Service's `IntelligenceActionEvaluator` evaluates PlanDefinition intelligence actions, creates `ActionRun` records (TRIGGERED → PUBLISHED), and publishes `IntelligenceTriggerEvent` messages to `cce.intelligence.triggers`.
 
 ```mermaid
 sequenceDiagram
@@ -147,7 +147,6 @@ testImplementation 'org.testcontainers:junit-jupiter'
 testImplementation 'com.squareup.okhttp3:mockwebserver'  // Mock webhook endpoints
 ```
 
-**Not included:** HAPI FHIR (FHIR payloads are hand-built as JSONB — no FHIR R4 runtime), Redis (no caching in 1.0.0).
 
 ---
 
@@ -256,8 +255,6 @@ flowchart TD
     RETRY -->|"No"| FAILED["DeliveryRun → FAILED"]
 ```
 
-> **What was removed:** The Compliance Service (v1.1.0+) performs all intelligence action evaluation — it evaluates PlanDefinition JSONLogic conditions, creates `ActionRun` records, and publishes triggers with the resolved `actionDefinitionId`. The Intelligence Service no longer re-evaluates conditions, parses PlanDefinition JSONB, or reads `protocol_definition`, `protocol_instance`, or `step_instance` tables. This eliminates the `IntelligenceActionEvaluator`, `ActionEvaluationContext`, `IntelligenceAction`, `ActionDefinitionResolver`, and `TemplateRenderer` classes from the original design.
-
 ### 4.1 Data Flow: Trigger Event → FHIR Payload
 
 The trigger event and the two read-only lookups (`action_run`, `action_definition`) provide everything needed:
@@ -280,7 +277,7 @@ IntelligenceTriggerEvent
 
 ### 4.2 FHIR Payload Generation
 
-The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from the trigger event and `ActionDefinition` metadata — no template rendering step needed. All structured data the receiver needs is in standard FHIR fields and CCE extensions. A default human-readable summary is generated for `payload.contentString` / `description`.
+The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from the trigger event and `ActionDefinition` metadata. All structured data the receiver needs is in standard FHIR fields and CCE extensions. A default human-readable summary is generated for `payload.contentString` / `description`.
 
 #### Payload Resource Types
 

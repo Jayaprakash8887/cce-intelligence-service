@@ -351,9 +351,6 @@ Tracks the **trigger lifecycle** (TRIGGERED → PUBLISHED) on the Compliance Ser
 | `intelligence_event_id` | `UUID` | **Yes** | Correlates with the `IntelligenceTriggerEvent.id` from Kafka |
 | `output_metadata` | `JSONB` | No | — |
 
-### Available Tables (Diagnostic & Traceability)
-
-These tables are accessible as read-only but are not required for the core trigger processing pipeline. They support diagnostic queries, traceability, and analytics.
 
 ### 7.6 `deviation`
 
@@ -380,50 +377,8 @@ Evaluation context for why an action fired. 1:1 relationship with `action_run`. 
 | `step_action_id` | `VARCHAR` | Available | PlanDefinition action ID |
 | `evaluation_context` | `JSONB` | Available | Full JSONLogic evaluation context snapshot (stepState, deviationType, daysOverdue, etc.) |
 
-> **Note:** `action_run_context.evaluation_context` contains a point-in-time JSONB snapshot of all runtime variables at trigger time. The Intelligence Service computes current values from `step_instance` for re-evaluation, but this snapshot is useful for audit/diagnostic purposes.
+> **Note:** `action_run_context.evaluation_context` contains a point-in-time JSONB snapshot of all runtime variables at trigger time. The Intelligence Service computes current values from `step_instance` for re-evaluation.
 
-### 7.8 `trigger_index`
-
-Inverted index for fast Tier 1 structural event matching. Rebuilt when protocols are loaded or retired.
-
-| Column | Type | Used By Intelligence | Purpose |
-|--------|------|---------------------|--------|
-| `id` | `UUID` | No | PK |
-| `protocol_definition_id` | `UUID` | No | FK to protocol |
-| `action_id` | `VARCHAR` | No | PlanDefinition action ID |
-| `resource_type` | `VARCHAR` | No | FHIR resource type trigger |
-| `code_filter` | `JSONB` | No | DataRequirement code filters |
-
-### 7.9 `event_log`
-
-Immutable log of all inbound CloudEvents processed by the Collector Service. Monthly-partitioned.
-
-| Column | Type | Used By Intelligence | Purpose |
-|--------|------|---------------------|--------|
-| `id` | `UUID` | No | PK |
-| `cloudevents_id` | `VARCHAR` | No | CloudEvent ID |
-| `source` | `VARCHAR` | No | Event source |
-| `type` | `VARCHAR` | No | Event type |
-| `subject` | `VARCHAR` | No | Patient UPID |
-| `time` | `TIMESTAMPTZ` | No | Event timestamp |
-| `data` | `JSONB` | No | Event payload |
-| `processing_status` | `VARCHAR` | No | Processing outcome |
-
-### 7.10 `audit_log`
-
-Compliance Service audit trail for significant operations.
-
-| Column | Type | Used By Intelligence | Purpose |
-|--------|------|---------------------|--------|
-| `id` | `UUID` | No | PK |
-| `entity_type` | `VARCHAR` | No | Audited entity type |
-| `entity_id` | `UUID` | No | Audited entity ID |
-| `action` | `VARCHAR` | No | Audit action |
-| `actor` | `VARCHAR` | No | Who performed the action |
-| `details` | `JSONB` | No | Action details |
-| `timestamp` | `TIMESTAMPTZ` | No | When the action occurred |
-
-> **Access note:** Tables 7.6–7.10 are available for ad-hoc diagnostic queries and can be surfaced through future API endpoints. They are not mapped to `@Immutable` entities unless a concrete use case arises during implementation.
 
 ---
 

@@ -127,7 +127,7 @@ cce.kafka:
 
 ## 4. Inbound Message Schema — IntelligenceTriggerEvent
 
-Published by the Compliance Service (v1.1.0+) when an intelligence action's condition matches — triggered by deviation detection (OVERDUE/MISSED) or step completion (e.g., late completion).
+Published by the Compliance Service (v1.1.0+) when an intelligence action's condition matches — triggered by a step's state change.
 
 ```json
 {
@@ -164,8 +164,6 @@ Published by the Compliance Service (v1.1.0+) when an intelligence action's cond
 **Kafka Key:** `protocolInstanceId` — ensures all triggers for the same protocol instance go to the same partition, maintaining ordering.
 
 ### Trigger Type Derivation
-
-The `type` field was removed from the event schema (Compliance Service v1.1.0). The trigger type is derivable from `deviationType` + `stepState` and should be computed by the Intelligence Service for metrics and logging:
 
 | Derived Type | Condition | Trigger Scenario |
 |---|---|---|
