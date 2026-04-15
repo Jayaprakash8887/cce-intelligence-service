@@ -9,28 +9,25 @@
 
 1. [End-to-End Intelligence Pipeline](#1-end-to-end-intelligence-pipeline)
 2. [Trigger Processing Sequence](#2-trigger-processing-sequence)
-3. [Intelligence Action Evaluation](#3-intelligence-action-evaluation)
-4. [Target Subscription Routing](#4-target-subscription-routing)
-5. [Action Dispatch & Webhook Delivery](#5-action-dispatch--webhook-delivery)
-6. [Delivery Run Lifecycle](#6-delivery-run-lifecycle)
-7. [Retry & Error Handling](#7-retry--error-handling)
-8. [REST API Flows](#8-rest-api-flows)
+3. [Target Subscription Routing](#3-target-subscription-routing)
+4. [Action Dispatch & Webhook Delivery](#4-action-dispatch--webhook-delivery)
+5. [Delivery Run Lifecycle](#5-delivery-run-lifecycle)
+6. [Retry & Error Handling](#6-retry--error-handling)
+7. [REST API Flows](#7-rest-api-flows)
 
 ---
 
 ## 1. End-to-End Intelligence Pipeline
 
-High-level data flow from Compliance Service trigger through to Receiver Adaptor delivery.
+High-level data flow from Compliance Service trigger through to Receiver Adaptor delivery. The Compliance Service handles all condition evaluation; this service is purely a routing and delivery engine.
 
 ```mermaid
 flowchart LR
     CS[Compliance Service] -->|IntelligenceTriggerEvent| K[Kafka<br/>cce.intelligence.triggers]
     K -->|consume| IC[Intelligence<br/>Consumer]
     IC --> IE[Intelligence<br/>Engine]
-    IE --> RE[Action<br/>Evaluator]
-    RE --> AR[Action Def<br/>Resolver]
-    AR --> TR[Template<br/>Renderer]
-    TR --> SR[Subscription<br/>Router]
+    IE --> FB[FHIR Payload<br/>Builder]
+    FB --> SR[Subscription<br/>Router]
     SR --> AD[Action<br/>Dispatcher]
     AD -->|HTTP POST| RA1[Receiver<br/>Adaptor #1]
     AD -->|HTTP POST| RA2[Receiver<br/>Adaptor #2]
@@ -38,9 +35,7 @@ flowchart LR
     subgraph Intelligence Service
         IC
         IE
-        RE
-        AR
-        TR
+        FB
         SR
         AD
     end
@@ -50,7 +45,7 @@ flowchart LR
         RA2
     end
 
-    IE -.->|read| DB[(PostgreSQL)]
+    IE -.->|read action_run,<br/>action_definition| DB[(PostgreSQL)]
     SR -.->|read target_subscription| DB
     AD -.->|write delivery_run| DB
 ```
@@ -67,9 +62,7 @@ sequenceDiagram
     participant Consumer as IntelligenceTriggerConsumer
     participant Engine as IntelligenceEngine
     participant DB as PostgreSQL
-    participant Evaluator as IntelligenceActionEvaluator
-    participant Resolver as ActionDefinitionResolver
-    participant Renderer as TemplateRenderer
+    participant Builder as FhirPayloadBuilder
     participant Router as SubscriptionRouter
     participant Dispatcher as ActionDispatcher
     participant Webhook1 as Receiver Adaptor #1
@@ -78,60 +71,41 @@ sequenceDiagram
     Kafka->>Consumer: IntelligenceTriggerEvent
     Consumer->>Engine: processTrigger(event)
 
-    Note over Engine,DB: Step 1 — Load Context (starting from actionRunId)
+    Note over Engine,DB: Step 1 — Idempotency Check
+    Engine->>DB: findDeliveredSubscriptions(actionRunId)
+    DB-->>Engine: already-delivered set (may be empty)
+
+    Note over Engine,DB: Step 2 — Load ActionRun + ActionDefinition
     Engine->>DB: findById(actionRunId)
-    DB-->>Engine: ActionRun (action_definition_id, protocol_instance_id, step_instance_id)
-    Engine->>DB: findById(protocol_instance_id)
-    DB-->>Engine: ProtocolInstance (with protocolDefinitionId)
-    Engine->>DB: findById(step_instance_id)
-    DB-->>Engine: StepInstance
-    Engine->>DB: findById(protocolDefinitionId)
-    DB-->>Engine: ProtocolDefinition (with PlanDefinition JSONB)
+    DB-->>Engine: ActionRun (action_definition_id)
+    Engine->>DB: findById(action_definition_id)
+    DB-->>Engine: ActionDefinition (action_type, severity, target)
 
-    Note over Engine,Evaluator: Step 2 — Extract & Evaluate Rules
-    Engine->>Engine: extractIntelligenceActions(planDefinition, actionId)
-    loop For each intelligence action
-        Engine->>Evaluator: evaluate(action.condition, evaluationContext)
-        Evaluator-->>Engine: matched = true/false
+    Note over Engine,Router: Step 3 — Resolve Target Subscriptions
+    Engine->>Router: findSubscriptions(protocolDefinitionId, target)
+    Router->>DB: query target_subscription + receiver_adaptor
+    DB-->>Router: TargetSubscription list with adaptors
+    Router-->>Engine: [Adaptor #1, Adaptor #2] minus already-delivered
 
-        opt matched = true
-            Note over Engine,DB: Step 3 — Idempotency Check
-            Engine->>DB: existsByActionRunIdAndTargetSubscriptionId(actionRunId, subscriptionId)
-            DB-->>Engine: false (not yet processed)
-
-            Note over Engine,Resolver: Step 4 — Resolve Action Definition
-            Engine->>Resolver: resolve(action.definitionCanonical)
-            Resolver->>DB: findByCanonicalUrlAndVersion(url, version)
-            DB-->>Resolver: ActionDefinition (read-only from Compliance)
-            Resolver-->>Engine: ActionDefinition (target, message template)
-
-            Note over Engine,Renderer: Step 5 — Render Template
-            Engine->>Renderer: render(actionDefinition, evaluationContext)
-            Renderer-->>Engine: renderedPayload
-
-            Note over Engine,Router: Step 6 — Resolve Target Subscriptions
-            Engine->>Router: findSubscriptions(protocolDefinitionId, target)
-            Router->>DB: query target_subscription + receiver_adaptor
-            DB-->>Router: TargetSubscription list with adaptors
-            Router-->>Engine: [Adaptor #1, Adaptor #2]
-
-            Note over Engine,Dispatcher: Step 7 — Fan-Out Delivery
-            par Deliver to Adaptor #1
-                Engine->>DB: save(DeliveryRun [PENDING] for Adaptor #1)
-                Engine->>Dispatcher: dispatch(deliveryRun, adaptor1)
-                Dispatcher->>DB: update(DeliveryRun [EXECUTING])
-                Dispatcher->>Webhook1: HTTP POST (renderedPayload)
-                Webhook1-->>Dispatcher: 200 OK
-                Dispatcher->>DB: update(DeliveryRun [DELIVERED])
-            and Deliver to Adaptor #2
-                Engine->>DB: save(DeliveryRun [PENDING] for Adaptor #2)
-                Engine->>Dispatcher: dispatch(deliveryRun, adaptor2)
-                Dispatcher->>DB: update(DeliveryRun [EXECUTING])
-                Dispatcher->>Webhook2: HTTP POST (renderedPayload)
-                Webhook2-->>Dispatcher: 200 OK
-                Dispatcher->>DB: update(DeliveryRun [DELIVERED])
-            end
-        end
+    Note over Engine,Dispatcher: Step 4 — Fan-Out Delivery
+    par Deliver to Adaptor #1
+        Engine->>DB: save(DeliveryRun [PENDING] for Adaptor #1)
+        Engine->>Builder: build(triggerEvent, actionDefinition, deliveryRunId)
+        Builder-->>Engine: FHIR CommunicationRequest / Task
+        Engine->>Dispatcher: dispatch(deliveryRun, fhirPayload, adaptor1)
+        Dispatcher->>DB: update(DeliveryRun [EXECUTING])
+        Dispatcher->>Webhook1: HTTP POST (FHIR payload)
+        Webhook1-->>Dispatcher: 200 OK
+        Dispatcher->>DB: update(DeliveryRun [DELIVERED])
+    and Deliver to Adaptor #2
+        Engine->>DB: save(DeliveryRun [PENDING] for Adaptor #2)
+        Engine->>Builder: build(triggerEvent, actionDefinition, deliveryRunId)
+        Builder-->>Engine: FHIR CommunicationRequest / Task
+        Engine->>Dispatcher: dispatch(deliveryRun, fhirPayload, adaptor2)
+        Dispatcher->>DB: update(DeliveryRun [EXECUTING])
+        Dispatcher->>Webhook2: HTTP POST (FHIR payload)
+        Webhook2-->>Dispatcher: 200 OK
+        Dispatcher->>DB: update(DeliveryRun [DELIVERED])
     end
 
     Engine-->>Consumer: processing complete
@@ -140,48 +114,7 @@ sequenceDiagram
 
 ---
 
-## 3. Intelligence Action Evaluation
-
-How intelligence actions are extracted from PlanDefinition and evaluated using JSONLogic.
-
-```mermaid
-flowchart TD
-    A[Load PlanDefinition from protocol_definition.definition] --> B[Find action matching trigger's actionId]
-    B --> C["Extract nested sub-actions (intelligence actions) where condition.language = text/jsonlogic"]
-    C --> D{Intelligence action found?}
-    D -->|No| Z[Skip — no intelligence actions for this step]
-    D -->|Yes| E[Build ActionEvaluationContext]
-
-    E --> F[For each Intelligence action]
-    F --> G[Parse JSONLogic condition expression]
-    G --> H[Apply JSONLogic with ActionEvaluationContext variables]
-    H --> I{Condition evaluates to true?}
-    I -->|No| J[Log: action skipped]
-    I -->|Yes| K[Check idempotency:<br/>action_run_id + subscription_id in delivery_run?]
-    K --> L{Already processed?}
-    L -->|Yes| M[Log: duplicate, skip]
-    L -->|No| N[Proceed to Action Resolution & Routing]
-
-    J --> F
-    M --> F
-    N --> O[Done evaluating rules]
-
-    subgraph ActionEvaluationContext Variables
-        direction LR
-        R1[stepState]
-        R2[deviationType]
-        R3[daysOverdue]
-        R4[daysPastMissedDate]
-        R5[requiredBehavior]
-        R6[completionStatus]
-    end
-
-    E -.-> R1 & R2 & R3 & R4 & R5 & R6
-```
-
----
-
-## 4. Target Subscription Routing
+## 3. Target Subscription Routing
 
 How the Intelligence Service resolves which Receiver Adaptors should receive a delivery for a given protocol + target combination.
 
@@ -240,7 +173,7 @@ flowchart TD
 
 ---
 
-## 5. Action Dispatch & Webhook Delivery
+## 4. Action Dispatch & Webhook Delivery
 
 How the Intelligence Service delivers an action to each subscribed Receiver Adaptor via webhook.
 
@@ -271,25 +204,28 @@ sequenceDiagram
     end
 ```
 
-### Webhook Payload
+### Webhook Payload — FHIR Resource Generation
 
 ```mermaid
 flowchart LR
-    AD["ActionDefinition .definition JSONB (FHIR extension)"] --> TR[TemplateRenderer]
-    RC["ActionEvaluationContext variables"] --> TR
-    TE["TriggerEvent fields"] --> TR
-    TR --> P[Rendered Payload JSON]
-    P --> H[HTTP POST Body]
+    TE["TriggerEvent fields"] --> FB[FhirPayloadBuilder]
+    AD["ActionDefinition metadata<br/>action_type, severity, target"] --> FB
+    DRI["DeliveryRun ID"] --> FB
+    AT{"ActionType?"} --> FB
+    FB -->|NOTIFICATION / ESCALATION| CR["FHIR CommunicationRequest"]
+    FB -->|COORDINATION| TK["FHIR Task"]
+    CR --> H[HTTP POST Body]
+    TK --> H
 
     subgraph "HTTP POST to Receiver Adaptor"
         H
-        Headers["Headers:<br/>Content-Type: application/json<br/>X-CCE-Delivery-Run-Id<br/>X-CCE-Trigger-Event-Id<br/>+ adaptor.config auth"]
+        Headers["Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id<br/>X-CCE-Action-Run-Id<br/>+ adaptor.config auth"]
     end
 ```
 
 ---
 
-## 6. Delivery Run Lifecycle
+## 5. Delivery Run Lifecycle
 
 State machine for `delivery_run.status` — all valid transitions.
 
@@ -331,9 +267,9 @@ stateDiagram-v2
 
 ---
 
-## 7. Retry & Error Handling
+## 6. Retry & Error Handling
 
-### 7.1 Webhook Delivery Retry
+### 6.1 Webhook Delivery Retry
 
 ```mermaid
 flowchart TD
@@ -359,7 +295,7 @@ flowchart TD
     end
 ```
 
-### 7.2 Kafka Consumer Error Handling
+### 6.2 Kafka Consumer Error Handling
 
 ```mermaid
 flowchart TD
@@ -374,18 +310,15 @@ flowchart TD
     G --> D
     F -->|No| H["Send to DLQ<br/>cce.intelligence.triggers.dlq"]
 
-    D -->|Individual action error| I[Log error, continue<br/>to remaining actions]
-    I --> E
-
     C --> J[Alert ops:<br/>cce.intelligence.consumer.errors++]
     H --> J
 ```
 
 ---
 
-## 8. REST API Flows
+## 7. REST API Flows
 
-### 8.1 Create Target Subscription
+### 7.1 Create Target Subscription
 
 ```mermaid
 sequenceDiagram
@@ -425,7 +358,7 @@ sequenceDiagram
     Controller-->>Client: 201 Created
 ```
 
-### 8.2 Cancel Delivery Run
+### 7.2 Cancel Delivery Run
 
 ```mermaid
 sequenceDiagram
@@ -455,7 +388,7 @@ sequenceDiagram
     Controller-->>Client: 200 OK
 ```
 
-### 8.3 Delete Receiver Adaptor
+### 7.3 Delete Receiver Adaptor
 
 ```mermaid
 sequenceDiagram

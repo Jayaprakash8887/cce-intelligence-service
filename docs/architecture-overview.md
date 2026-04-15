@@ -2,7 +2,7 @@
 
 ## 1. System Context
 
-The **CCE Intelligence Service** is the delivery engine of the CCE platform. It consumes intelligence trigger events published by the Compliance Service via Kafka, re-evaluates PlanDefinition intelligence actions, resolves routing via a many-to-many **target subscription** model, renders message templates, and delivers actions to registered **Receiver Adaptors** via webhook.
+The **CCE Intelligence Service** is the delivery engine of the CCE platform. It consumes intelligence trigger events published by the Compliance Service via Kafka, resolves routing via a many-to-many **target subscription** model, builds FHIR-compliant payloads, and delivers actions to registered **Receiver Adaptors** via webhook.
 
 > All REST requests arrive via the **CCE Gateway Service**, which validates OAuth tokens and enforces scopes (`delivery-runs:read|write`, `target-subscriptions:read|write`, `admin`). The Intelligence Service does not handle authentication or authorization.
 
@@ -16,9 +16,7 @@ graph TB
     subgraph CCE Intelligence Service
         CONSUMER["Intelligence Trigger<br/>Consumer"]
         ENGINE["Intelligence Engine<br/>(Core Orchestrator)"]
-        EVALUATOR["Intelligence Action<br/>Evaluator (JSONLogic)"]
-        RESOLVER["Action Definition<br/>Resolver"]
-        RENDERER["Template Renderer"]
+        BUILDER["FHIR Payload Builder<br/>(CommunicationRequest / Task)"]
         ROUTER["Subscription Router<br/>(target_subscription)"]
         DISPATCHER["Action Dispatcher<br/>(fan-out)"]
         TRACKER["Delivery Run Tracker"]
@@ -37,10 +35,8 @@ graph TB
     COMPLIANCE --> KAFKA
     KAFKA -->|"cce.intelligence.triggers"| CONSUMER
     CONSUMER --> ENGINE
-    ENGINE --> EVALUATOR
-    ENGINE --> RESOLVER
-    RESOLVER --> DB
-    ENGINE --> RENDERER
+    ENGINE --> DB
+    ENGINE --> BUILDER
     ENGINE --> ROUTER
     ROUTER --> DB
     ROUTER --> DISPATCHER
@@ -55,7 +51,7 @@ graph TB
     classDef data fill:#27AE60,stroke:#1E8449,color:white
     classDef broker fill:#E67E22,stroke:#D35400,color:white
 
-    class CONSUMER,ENGINE,EVALUATOR,RESOLVER,RENDERER,ROUTER,DISPATCHER,TRACKER,API service
+    class CONSUMER,ENGINE,BUILDER,ROUTER,DISPATCHER,TRACKER,API service
     class GATEWAY,RECEIVER_WH external
     class DB data
     class KAFKA,COMPLIANCE broker
@@ -81,7 +77,7 @@ sequenceDiagram
     CS->>CS: Create ActionRun (TRIGGERED → PUBLISHED)
     CS->>Kafka: Publish IntelligenceTriggerEvent<br/>(key: protocolInstanceId)
     Kafka->>IS: Deliver trigger event
-    IS->>IS: Load context, re-evaluate rules, resolve routing
+    IS->>IS: Load ActionRun + ActionDefinition, resolve routing
     IS->>RA: Fan-out webhook delivery via target subscriptions
 ```
 
@@ -115,7 +111,7 @@ sequenceDiagram
 | DB access | Spring Data JPA + Hibernate | (Spring Boot managed) |
 | DB migration | Flyway | (Spring Boot managed) |
 | Connection pool | HikariCP | (Spring Boot default) |
-| Expression evaluation | Apache Johnzon JsonLogic | 2.0.2 |
+| Expression evaluation | ~~Apache Johnzon JsonLogic~~ | ~~2.0.2~~ | *Removed — evaluation handled by Compliance Service* |
 | HTTP client | Spring WebClient (reactive, non-blocking) | (Spring Boot managed) |
 | Observability | Micrometer + Prometheus | (Spring Boot managed) |
 | Testing | JUnit 5, Testcontainers, MockMvc | |
@@ -136,8 +132,8 @@ runtimeOnly 'org.postgresql:postgresql'
 implementation 'org.flywaydb:flyway-core'
 implementation 'org.flywaydb:flyway-database-postgresql'
 
-// Expression evaluation
-implementation 'org.apache.johnzon:johnzon-jsonlogic:2.0.2'
+// Expression evaluation — removed (evaluation handled by Compliance Service)
+// implementation 'org.apache.johnzon:johnzon-jsonlogic:2.0.2'
 
 // Observability
 implementation 'io.micrometer:micrometer-registry-prometheus'
@@ -151,7 +147,7 @@ testImplementation 'org.testcontainers:junit-jupiter'
 testImplementation 'com.squareup.okhttp3:mockwebserver'  // Mock webhook endpoints
 ```
 
-**Not included:** HAPI FHIR (PlanDefinition intelligence actions are parsed as JSONB — no FHIR R4 runtime), Redis (no caching in 1.0.0).
+**Not included:** HAPI FHIR (FHIR payloads are hand-built as JSONB — no FHIR R4 runtime), Redis (no caching in 1.0.0).
 
 ---
 
@@ -174,10 +170,7 @@ src/main/java/org/openphc/cce/intelligence/
 │   │   └── DeliveryAuditLog.java                  # Audit trail entry
 │   ├── readonly/
 │   │   ├── ActionDefinition.java                  # Read-only (@Immutable) — compliance-owned
-│   │   ├── ActionRun.java                         # Read-only (@Immutable) — FK anchor for delivery_run
-│   │   ├── ProtocolDefinition.java                # Read-only (@Immutable)
-│   │   ├── ProtocolInstance.java                  # Read-only (@Immutable)
-│   │   └── StepInstance.java                      # Read-only (@Immutable)
+│   │   └── ActionRun.java                         # Read-only (@Immutable) — FK anchor for delivery_run
 │   ├── enums/
 │   │   ├── DeliveryRunStatus.java                 # PENDING, EXECUTING, DELIVERED, FAILED, CANCELLED
 │   │   ├── ActionType.java                        # NOTIFICATION, ESCALATION, COORDINATION
@@ -189,17 +182,10 @@ src/main/java/org/openphc/cce/intelligence/
 │       ├── TargetSubscriptionRepository.java
 │       ├── DeliveryAuditLogRepository.java
 │       ├── ActionDefinitionRepository.java        # Read-only
-│       ├── ActionRunRepository.java               # Read-only — lookup by id for delivery anchoring
-│       ├── ProtocolDefinitionRepository.java      # Read-only
-│       ├── ProtocolInstanceRepository.java        # Read-only
-│       └── StepInstanceRepository.java            # Read-only
+│       └── ActionRunRepository.java               # Read-only — lookup by id for delivery anchoring
 ├── engine/
-│   ├── IntelligenceEngine.java                    # Core orchestrator — trigger → evaluate → route → deliver
-│   ├── IntelligenceActionEvaluator.java                         # JSONLogic condition evaluation against step runtime
-│   ├── ActionEvaluationContext.java                            # Record: stepState, daysOverdue, etc.
-│   ├── IntelligenceAction.java                      # Record: actionId, condition, definitionCanonical, severity, target
-│   ├── ActionDefinitionResolver.java              # Resolve definitionCanonical → ActionDefinition entity
-│   ├── TemplateRenderer.java                      # Variable substitution in message templates
+│   ├── IntelligenceEngine.java                    # Core orchestrator — trigger → build payload → route → deliver
+│   ├── FhirPayloadBuilder.java                    # Builds FHIR CommunicationRequest or Task from trigger + ActionDefinition
 │   ├── SubscriptionRouter.java                    # Resolve (protocol_definition_id, target) → List<ReceiverAdaptor>
 │   └── ActionDispatcher.java                      # Fan-out webhook delivery to subscribed adaptors
 ├── kafka/
@@ -237,153 +223,192 @@ src/test/java/org/openphc/cce/intelligence/           # Unit tests
 src/integrationTest/java/org/openphc/cce/intelligence/ # Integration tests
 ```
 
-**Total:** ~40 source files across 14 packages.
+**Total:** ~30 source files across 11 packages.
 
 ---
 
 ## 4. Core Pipeline — IntelligenceEngine
 
-The `IntelligenceEngine` is the central orchestrator. All intelligence trigger processing flows through it:
+The `IntelligenceEngine` is the central orchestrator. The pipeline is deliberately simple — the Compliance Service has already evaluated *when* and *what* to act on. This service only handles *where* (routing) and *how* (FHIR payload + webhook delivery).
 
 ```mermaid
 flowchart TD
     START["IntelligenceTriggerEvent received<br/>from cce.intelligence.triggers"] --> S1
 
-    S1["Step 1: Idempotency Check<br/>(actionRunId already processed?)"]
-    S1 -->|"All subscriptions already delivered"| DUP["Return early (no-op)"]
+    S1["Step 1: Idempotency Check<br/>(actionRunId + subscriptions already delivered?)"]
+    S1 -->|"All subscriptions delivered"| DUP["Return early — no-op"]
     S1 -->|"New or partial"| S2
 
-    S2["Step 2: Load Context<br/>action_run, step_instance,<br/>protocol_instance, protocol_definition"] --> S3
+    S2["Step 2: Load ActionRun + ActionDefinition<br/>(action_type, severity, target)"] --> S3
 
-    S3["Step 3: Extract Intelligence Actions<br/>from PlanDefinition nested sub-actions<br/>matching trigger's actionId"] --> S4
+    S3["Step 3: Resolve Target Subscriptions<br/>(protocol_definition_id, target)<br/>→ subscribed adaptors"] --> S4
 
-    S4["Step 4: Build ActionEvaluationContext<br/>(stepState, daysOverdue, etc.)"] --> S5
+    S4{"Step 4: Fan-Out Delivery<br/>For each subscribed adaptor:"}
+    S4 --> S5
 
-    S5{"Step 5: Evaluate Each Action<br/>(JSONLogic condition)"}
-    S5 -->|"true"| S6
-    S5 -->|"false"| SKIP["Skip action"]
+    S5["Create DeliveryRun — PENDING<br/>→ Build FHIR Payload<br/>→ Dispatch Webhook<br/>→ Track Outcome"]
+    S5 --> S6
 
-    S6["Step 6: Resolve Action Definition<br/>(definitionCanonical → ActionDefinition)<br/>Extract target + message template"] --> S7
-
-    S7["Step 7: Resolve Target Subscriptions<br/>(protocol_definition_id, target)<br/>→ List&lt;ReceiverAdaptor&gt;"] --> S8
-
-    S8{"Step 8: Fan-Out Delivery<br/>For each subscribed adaptor:"}
-    S8 --> S9
-
-    S9["Create DeliveryRun (PENDING)<br/>→ Render Template<br/>→ Dispatch Webhook<br/>→ Track Outcome"]
-    S9 --> S10
-
-    S10{"Delivery Result"}
-    S10 -->|"Success"| DELIVERED["DeliveryRun → DELIVERED"]
-    S10 -->|"Failure"| RETRY{"Retries remaining?"}
-    RETRY -->|"Yes"| S9
+    S6{"Delivery Result"}
+    S6 -->|"Success"| DELIVERED["DeliveryRun → DELIVERED"]
+    S6 -->|"Failure"| RETRY{"Retries remaining?"}
+    RETRY -->|"Yes"| S5
     RETRY -->|"No"| FAILED["DeliveryRun → FAILED"]
 ```
 
-### 4.1 Intelligence Actions in PlanDefinition
+> **What was removed:** The Compliance Service (v1.1.0+) performs all intelligence action evaluation — it evaluates PlanDefinition JSONLogic conditions, creates `ActionRun` records, and publishes triggers with the resolved `actionDefinitionId`. The Intelligence Service no longer re-evaluates conditions, parses PlanDefinition JSONB, or reads `protocol_definition`, `protocol_instance`, or `step_instance` tables. This eliminates the `IntelligenceActionEvaluator`, `ActionEvaluationContext`, `IntelligenceAction`, `ActionDefinitionResolver`, and `TemplateRenderer` classes from the original design.
 
-Intelligence actions are modeled as **nested sub-actions** within a PlanDefinition step action (`action.action[]`). The Compliance Service evaluates these conditions and publishes triggers when they match. The Intelligence Service re-evaluates the same conditions to determine which specific sub-action fired and to resolve the `definitionCanonical` needed for routing and template rendering.
+### 4.1 Data Flow: Trigger Event → FHIR Payload
+
+The trigger event and the two read-only lookups (`action_run`, `action_definition`) provide everything needed:
+
+```
+IntelligenceTriggerEvent
+  ├── actionRunId ──────────► action_run ──► action_definition
+  │                                            ├── action_type (NOTIFICATION/ESCALATION/COORDINATION)
+  │                                            ├── severity (LOW/MEDIUM/HIGH/CRITICAL)
+  │                                            └── target (e.g., "supervisor")
+  ├── subject ──────────────► FHIR subject.identifier
+  ├── protocolCanonical ────► FHIR about[0].reference
+  ├── actionId ─────────────► FHIR about[1].display
+  ├── deviationType ────────► FHIR extension (cce-deviation-type)
+  ├── stepState ────────────► FHIR extension (cce-step-state)
+  ├── facilityId ───────────► FHIR extension (cce-facility-id)
+  ├── detectedAt ───────────► FHIR authoredOn
+  └── metadata (dueDate, overdueDate, etc.) ──► FHIR extensions
+```
+
+### 4.2 FHIR Payload Generation
+
+The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from the trigger event and `ActionDefinition` metadata — no template rendering step needed. All structured data the receiver needs is in standard FHIR fields and CCE extensions. A default human-readable summary is generated for `payload.contentString` / `description`.
+
+#### Payload Resource Types
+
+| Action Type | FHIR Resource | Rationale |
+|---|---|---|
+| `NOTIFICATION` | `CommunicationRequest` | Standard FHIR resource for "send this message" semantics |
+| `ESCALATION` | `CommunicationRequest` | Same structure, differentiated by `priority` and `category` |
+| `COORDINATION` | `Task` | Standard FHIR resource for "perform this action" semantics |
+
+#### CommunicationRequest Payload (NOTIFICATION / ESCALATION)
 
 ```json
 {
-  "id": "anc-visit-2",
-  "title": "Second ANC Visit",
-  "action": [
+  "resourceType": "CommunicationRequest",
+  "identifier": [{
+    "system": "http://openphc.org/fhir/delivery-run-id",
+    "value": "aaaa-bbbb-cccc-dddd"
+  }],
+  "status": "active",
+  "priority": "urgent",
+  "category": [{
+    "coding": [{
+      "system": "http://openphc.org/fhir/CodeSystem/cce-action-type",
+      "code": "ESCALATION",
+      "display": "Escalation"
+    }]
+  }],
+  "subject": {
+    "identifier": { "system": "http://openphc.org/fhir/patient-upid", "value": "260225-0002-5501" }
+  },
+  "about": [
+    { "reference": "PlanDefinition/anc-high-risk|2.1" },
+    { "display": "anc-visit-2" }
+  ],
+  "payload": [{
+    "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 (PlanDefinition/anc-high-risk|2.1)"
+  }],
+  "recipient": [{ "display": "supervisor" }],
+  "authoredOn": "2026-04-15T00:00:05Z",
+  "extension": [
     {
-      "id": "anc-visit-2-overdue-alert",
-      "title": "Alert — overdue notification",
-      "condition": [{
-        "kind": "applicability",
-        "expression": {
-          "language": "text/jsonlogic",
-          "expression": "{\"==\": [{\"var\": \"stepState\"}, \"overdue\"]}"
-        }
-      }],
-      "definitionCanonical": "ActivityDefinition/anc-overdue-alert|1.0",
-      "extension": [
-        {
-          "url": "http://openphc.org/fhir/StructureDefinition/intelligence-severity",
-          "valueCode": "high"
-        },
-        {
-          "url": "http://openphc.org/fhir/StructureDefinition/intelligence-target",
-          "valueCode": "supervisor"
-        }
-      ]
+      "url": "http://openphc.org/fhir/StructureDefinition/cce-severity",
+      "valueCode": "high"
     },
     {
-      "id": "anc-visit-2-missed-escalation",
-      "title": "Escalation — missed step",
-      "condition": [{
-        "kind": "applicability",
-        "expression": {
-          "language": "text/jsonlogic",
-          "expression": "{\"and\": [{\"==\": [{\"var\": \"deviationType\"}, \"missed\"]}, {\"==\": [{\"var\": \"requiredBehavior\"}, \"must\"]}]}"
-        }
-      }],
-      "definitionCanonical": "ActivityDefinition/anc-missed-escalation|1.0",
-      "extension": [
-        {
-          "url": "http://openphc.org/fhir/StructureDefinition/intelligence-severity",
-          "valueCode": "critical"
-        },
-        {
-          "url": "http://openphc.org/fhir/StructureDefinition/intelligence-target",
-          "valueCode": "supervisor"
-        }
-      ]
+      "url": "http://openphc.org/fhir/StructureDefinition/cce-action-run-id",
+      "valueId": "action-run-uuid"
+    },
+    {
+      "url": "http://openphc.org/fhir/StructureDefinition/cce-deviation-type",
+      "valueCode": "overdue"
+    },
+    {
+      "url": "http://openphc.org/fhir/StructureDefinition/cce-facility-id",
+      "valueString": "0002"
+    },
+    {
+      "url": "http://openphc.org/fhir/StructureDefinition/cce-step-state",
+      "valueCode": "overdue"
     }
   ]
 }
 ```
 
-### 4.2 ActionEvaluationContext Variable Binding
-
-| Variable | Type | Source | Available On |
-|---|---|---|---|
-| `stepState` | String | `step_instance.state` (lowercase) | Both |
-| `deviationType` | String | `trigger.deviationType` (lowercase) | When present |
-| `daysOverdue` | Long | `ChronoUnit.DAYS.between(dueDate, now)` (≥ 0) | Deviation only |
-| `daysPastMissedDate` | Long | `ChronoUnit.DAYS.between(missedDate, now)` (≥ 0) | MISSED only |
-| `actionId` | String | `step_instance.action_id` | Both |
-| `repeatIndex` | Integer | `step_instance.repeat_index` | Both |
-| `requiredBehavior` | String | `step_instance.required_behavior` | Both |
-| `completionStatus` | String | `step_instance.completion_status` (lowercase) | Completion only |
-| `dueDate` | OffsetDateTime | `step_instance.due_date` | Both |
-| `completedAt` | OffsetDateTime | `step_instance.completed_at` | Completion only |
-
-### 4.3 Template Rendering
-
-Message templates are stored in the Compliance Service's `action_definition.definition` JSONB (FHIR `ActivityDefinition` resource) as a FHIR extension:
+#### Task Payload (COORDINATION)
 
 ```json
 {
-  "url": "http://openphc.org/fhir/StructureDefinition/cce-message-template",
-  "valueString": "Patient {patient_id} step {action_id} is {days_overdue} days overdue at facility {facility_id}"
+  "resourceType": "Task",
+  "identifier": [{
+    "system": "http://openphc.org/fhir/delivery-run-id",
+    "value": "aaaa-bbbb-cccc-dddd"
+  }],
+  "status": "requested",
+  "intent": "order",
+  "priority": "urgent",
+  "code": {
+    "coding": [{
+      "system": "http://openphc.org/fhir/CodeSystem/cce-action-type",
+      "code": "COORDINATION",
+      "display": "Coordination"
+    }]
+  },
+  "description": "[CRITICAL] COORDINATION for patient 260225-0002-5501 — step anc-visit-2 (PlanDefinition/anc-high-risk|2.1)",
+  "for": {
+    "identifier": { "system": "http://openphc.org/fhir/patient-upid", "value": "260225-0002-5501" }
+  },
+  "authoredOn": "2026-04-15T00:00:05Z",
+  "extension": [
+    {
+      "url": "http://openphc.org/fhir/StructureDefinition/cce-severity",
+      "valueCode": "critical"
+    },
+    {
+      "url": "http://openphc.org/fhir/StructureDefinition/cce-protocol-canonical",
+      "valueCanonical": "PlanDefinition/anc-high-risk|2.1"
+    },
+    {
+      "url": "http://openphc.org/fhir/StructureDefinition/cce-action-id",
+      "valueString": "anc-visit-2"
+    }
+  ]
 }
 ```
 
-The `TemplateRenderer` extracts this extension, replaces `{variable}` placeholders with values sourced from the trigger event and read-only database tables (`step_instance`, `action_definition`), and produces the rendered payload sent to each Receiver Adaptor. Variables are computed at evaluation time from the database for accuracy, not from event metadata snapshots.
+#### FHIR Field Mapping
 
-**Template Variables:**
+| FHIR Field | CommunicationRequest | Task | Source |
+|---|---|---|---|
+| `identifier` | Delivery run ID | Delivery run ID | `delivery_run.id` |
+| `status` | `active` | `requested` | Fixed per resource type |
+| `priority` | Mapped from severity | Mapped from severity | `action_definition.severity` |
+| `category` / `code` | Action type coding | Action type coding | `action_definition.action_type` |
+| `subject` / `for` | Patient UPID | Patient UPID | `trigger.subject` |
+| `about` | Protocol + action ID | — | `trigger.protocolCanonical`, `trigger.actionId` |
+| `payload.contentString` / `description` | Auto-generated summary | Auto-generated summary | `FhirPayloadBuilder` |
+| `recipient` | Target name | — | `action_definition.target` |
+| `authoredOn` | Detection time | Detection time | `trigger.detectedAt` |
+| `extension.*` | Deviation type, facility, step state, metadata | Same | Trigger event fields + `action_definition` |
 
-| Variable | Source | Description |
-|---|---|---|
-| `{patient_id}` | `trigger.subject` | Patient UPID |
-| `{action_id}` | `trigger.actionId` | PlanDefinition action ID |
-| `{protocol_canonical}` | `trigger.protocolCanonical` | Protocol `url\|version` |
-| `{facility_id}` | Extracted from `trigger.subject` UPID (positions 7-10: `260225-XXXX-5501`) | Source FOSA facility code |
-| `{days_overdue}` | `ChronoUnit.DAYS.between(step_instance.due_date, now())`, clamped ≥ 0 | Days since due date |
-| `{days_past_missed}` | `ChronoUnit.DAYS.between(step_instance.missed_date, now())`, clamped ≥ 0 | Days since missed date |
-| `{severity}` | `action_definition.severity` (or PlanDefinition extension override) | Intelligence severity |
-| `{deviation_type}` | `trigger.deviationType` | Deviation type (overdue/missed/null) |
-| `{step_state}` | `trigger.stepState` | Current step state (lowercase) |
-| `{due_date}` | `step_instance.due_date` | Step due date |
-| `{overdue_date}` | `step_instance.overdue_date` | Overdue threshold date |
-| `{missed_date}` | `step_instance.missed_date` | Missed threshold date |
-| `{completed_at}` | `step_instance.completed_at` | Step completion timestamp |
-| `{required_behavior}` | `step_instance.required_behavior` | Step requirement level (`must`, `could`, `must-unless-documented`) |
-| `{completion_status}` | `step_instance.completion_status` (lowercase) | Completion status (`on_time`, `early`, `late`) |
+#### Severity → FHIR Priority Mapping
+
+| CCE Severity | FHIR `priority` |
+|---|---|
+| `LOW` | `routine` |
+| `MEDIUM` | `urgent` |
+| `HIGH` | `urgent` |
+| `CRITICAL` | `asap` |
 
 ---
 
@@ -511,7 +536,6 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 | Metric | Type | Tags | Description |
 |---|---|---|---|
 | `cce.intelligence.triggers.received` | Counter | `deviation_type` | Triggers received from Kafka |
-| `cce.intelligence.actions.evaluated` | Counter | `result` | Rules evaluated (matched/skipped/error) |
 | `cce.intelligence.deliveries.dispatched` | Counter | `action_type`, `severity` | Deliveries dispatched to adaptors |
 | `cce.intelligence.deliveries.delivered` | Counter | `action_type` | Successful deliveries |
 | `cce.intelligence.deliveries.failed` | Counter | `action_type` | Failed deliveries |
@@ -544,7 +568,6 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 
 - **Consumer errors:** Exception propagates to `DefaultErrorHandler` → retries with 1-second fixed backoff (up to 3 attempts) → routes to DLQ topic (`cce.intelligence.triggers.dlq`)
 - **Deserialization errors:** `ErrorHandlingDeserializer` wraps errors gracefully, routes to DLQ
-- **Individual action errors:** If one intelligence action fails during evaluation, the remaining actions still process. The failed action is logged and skipped.
 
 ### 9.3 Webhook Delivery
 
