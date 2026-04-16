@@ -188,7 +188,7 @@ sequenceDiagram
     Dispatcher->>Audit: log(DISPATCHED, adaptorName, endpointUrl)
 
     Dispatcher->>Adaptor: HTTP POST endpoint_url
-    Note right of Adaptor: Headers:<br/>Content-Type: application/json<br/>X-CCE-Delivery-Run-Id: {runId}<br/>X-CCE-Action-Run-Id: {actionRunId}<br/>+ adaptor auth headers from config
+    Note right of Adaptor: Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id: {runId}<br/>X-CCE-Action-Run-Id: {actionRunId}<br/>+ adaptor auth headers from config
 
     alt HTTP 2xx
         Adaptor-->>Dispatcher: 200 OK
