@@ -64,7 +64,7 @@ erDiagram
         varchar protocol_canonical
         varchar facility_id
         varchar severity
-        jsonb rendered_payload
+        jsonb fhir_payload
         jsonb delivery_result
         int attempt_count
         timestamptz created_at
@@ -108,7 +108,7 @@ erDiagram
     }
 ```
 
-> **Read-only tables** — All 10 Compliance Service tables are accessible as read-only via `@Immutable` JPA entities. The Intelligence Service **never writes** to them. Five tables are actively used by the processing pipeline (`action_run`, `action_definition`, `protocol_definition`, `protocol_instance`, `step_instance`). The remaining five (`deviation`, `action_run_context`, `trigger_index`, `event_log`, `audit_log`) are available for diagnostic queries and traceability but are not required for core trigger processing.
+> **Read-only tables** — The Intelligence Service reads 2 Compliance Service tables (`action_run`, `action_definition`) via `@Immutable` JPA entities. It **never writes** to them. The remaining Compliance Service tables (`protocol_definition`, `protocol_instance`, `step_instance`, `deviation`, `action_run_context`, etc.) are not accessed — all condition evaluation is handled by the Compliance Service before triggers are published.
 
 ---
 
@@ -121,15 +121,7 @@ erDiagram
 | 3 | `delivery_run` | Intelligence Service | Delivery lifecycle per (action_run × adaptor) | High (per action_run × adaptor) |
 | 4 | `delivery_audit_log` | Intelligence Service | Audit trail for delivery lifecycle events | High |
 | 5 | `action_run` | Compliance Service | Trigger lifecycle TRIGGERED → PUBLISHED; FK anchor for delivery_run (read-only) | — |
-| 6 | `action_definition` | Compliance Service | FHIR ActivityDefinition resources (read-only) | — |
-| 7 | `protocol_definition` | Compliance Service | PlanDefinition with intelligence actions (read-only) | — |
-| 8 | `protocol_instance` | Compliance Service | Patient enrollment context (read-only) | — |
-| 9 | `step_instance` | Compliance Service | Step runtime state for action evaluation (read-only) | — |
-| 10 | `deviation` | Compliance Service | Compliance deviations; available via action_run_context (read-only) | — |
-| 11 | `action_run_context` | Compliance Service | Evaluation context snapshot; 1:1 with action_run (read-only) | — |
-| 12 | `trigger_index` | Compliance Service | Inverted index for Tier 1 event matching (read-only) | — |
-| 13 | `event_log` | Compliance Service | Immutable inbound CloudEvents log (read-only) | — |
-| 14 | `audit_log` | Compliance Service | Compliance service audit trail (read-only) | — |
+| 6 | `action_definition` | Compliance Service | FHIR ActivityDefinition resources — action type, severity, target (read-only) | — |
 
 ---
 
@@ -221,7 +213,7 @@ Tracks the **delivery lifecycle** of an intelligence action to a specific Receiv
 | `protocol_canonical` | `VARCHAR` | **NOT NULL** | — | Protocol `url\|version`. |
 | `facility_id` | `VARCHAR` | Yes | — | FOSA facility code, extracted from `subject` UPID (positions 7-10: `260225-XXXX-5501`). |
 | `severity` | `VARCHAR` | **NOT NULL** | — | Intelligence severity. See [IntelligenceSeverity](#intelligenceseverity). |
-| `rendered_payload` | `JSONB` | **NOT NULL** | — | The fully rendered action payload sent to the adaptor. |
+| `fhir_payload` | `JSONB` | **NOT NULL** | — | The FHIR R4 resource (CommunicationRequest or Task) sent to the adaptor. See [JSONB: fhir_payload](#delivery_run--fhir_payload). |
 | `delivery_result` | `JSONB` | Yes | — | Delivery response details (HTTP status, error message, attempts). See [JSONB: delivery_result](#delivery_run--delivery_result). |
 | `attempt_count` | `INTEGER` | **NOT NULL** | `0` | Number of delivery attempts made. |
 | `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | When the delivery run was created. |
@@ -426,6 +418,10 @@ Intelligence Service categorization of actions. Derived from the Compliance Serv
 
 ### `receiver_adaptor` → `config`
 
+**Credential ownership:** The external Receiver Adaptor operator generates and manages their own auth credentials (API keys, bearer tokens, etc.). A CCE admin registers the adaptor via `POST /v1/receiver-adaptors`, placing the operator-provided credentials into `config`. The `WebhookDeliveryClient` reads `authHeader` + `authValue` at dispatch time and injects them into the outbound HTTP request. The Intelligence Service never *issues* tokens — it only *stores and presents* credentials that the receiving system expects.
+
+> **Security note:** `authValue` contains sensitive credentials and should be encrypted at rest in production (e.g., via PostgreSQL pgcrypto or application-level encryption). Credentials are **never logged** — the `WebhookDeliveryClient` masks them in all log output.
+
 ```json
 {
   "authHeader": "X-API-Key",
@@ -441,25 +437,47 @@ Intelligence Service categorization of actions. Derived from the Compliance Serv
 }
 ```
 
-### `delivery_run` → `rendered_payload`
+### `delivery_run` → `fhir_payload`
 
-The fully rendered action payload sent to the Receiver Adaptor:
+The FHIR R4-compliant resource sent to the Receiver Adaptor. Resource type depends on `action_definition.action_type`:
+- `NOTIFICATION` / `ESCALATION` → `CommunicationRequest`
+- `COORDINATION` → `Task`
 
 ```json
 {
-  "type": "NOTIFICATION",
-  "severity": "HIGH",
-  "subject": "260225-0002-5501",
-  "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
-  "actionId": "anc-visit-2",
-  "facilityId": "0002",
-  "message": "Patient 260225-0002-5501 step anc-visit-2 is 5 days overdue at facility 0002",
-  "metadata": {
-    "deviationType": "overdue",
-    "daysOverdue": 5,
-    "dueDate": "2026-03-20T00:00:00Z",
-    "overdueDate": "2026-03-25T00:00:00Z"
-  }
+  "resourceType": "CommunicationRequest",
+  "identifier": [{
+    "system": "http://openphc.org/fhir/delivery-run-id",
+    "value": "aaaa-bbbb-cccc-dddd"
+  }],
+  "status": "active",
+  "priority": "urgent",
+  "category": [{
+    "coding": [{
+      "system": "http://openphc.org/fhir/CodeSystem/cce-action-type",
+      "code": "ESCALATION",
+      "display": "Escalation"
+    }]
+  }],
+  "subject": {
+    "identifier": { "system": "http://openphc.org/fhir/patient-upid", "value": "260225-0002-5501" }
+  },
+  "about": [
+    { "reference": "PlanDefinition/anc-high-risk|2.1" },
+    { "display": "anc-visit-2" }
+  ],
+  "payload": [{
+    "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 (PlanDefinition/anc-high-risk|2.1)"
+  }],
+  "recipient": [{ "display": "supervisor" }],
+  "authoredOn": "2026-04-15T00:00:05Z",
+  "extension": [
+    { "url": "http://openphc.org/fhir/StructureDefinition/cce-severity", "valueCode": "high" },
+    { "url": "http://openphc.org/fhir/StructureDefinition/cce-action-run-id", "valueId": "action-run-uuid" },
+    { "url": "http://openphc.org/fhir/StructureDefinition/cce-deviation-type", "valueCode": "overdue" },
+    { "url": "http://openphc.org/fhir/StructureDefinition/cce-facility-id", "valueString": "0002" },
+    { "url": "http://openphc.org/fhir/StructureDefinition/cce-step-state", "valueCode": "overdue" }
+  ]
 }
 ```
 
@@ -506,7 +524,6 @@ Content varies by event type:
 | Metric Name | Type | Tags | Description |
 |-------------|------|------|-------------|
 | `cce.intelligence.triggers.received` | Counter | `deviation_type` | Triggers received from Kafka |
-| `cce.intelligence.actions.evaluated` | Counter | `result` | Rules evaluated (matched/skipped/error) |
 | `cce.intelligence.deliveries.dispatched` | Counter | `action_type`, `severity` | Deliveries dispatched to adaptors |
 | `cce.intelligence.deliveries.delivered` | Counter | `action_type` | Successful deliveries |
 | `cce.intelligence.deliveries.failed` | Counter | `action_type` | Failed deliveries |

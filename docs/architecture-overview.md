@@ -521,7 +521,8 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 ## 7. Security
 
 - **Authentication & Authorization:** Handled by the **CCE API Gateway**. This service does not implement security directly — all requests arrive pre-authenticated.
-- **Webhook credentials:** Stored in `receiver_adaptor.config` JSONB. Auth headers (API keys, bearer tokens) are injected by `WebhookDeliveryClient` at dispatch time. Credentials are never logged.
+- **Webhook credentials:** Stored in `receiver_adaptor.config` JSONB. The **external Receiver Adaptor operator** generates and manages their own auth credentials (API keys, bearer tokens, mTLS certs). A CCE admin registers the adaptor via `POST /v1/receiver-adaptors`, placing the operator-provided credentials into `config`. The `WebhookDeliveryClient` reads `authHeader` + `authValue` at dispatch time and injects them into the outbound HTTP request. The Intelligence Service never *issues* tokens — it only *stores and presents* credentials that the receiving system expects.
+- **Credential protection:** `authValue` in `receiver_adaptor.config` should be encrypted at rest in production (e.g., via PostgreSQL pgcrypto or application-level encryption). Credentials are **never logged** — the `WebhookDeliveryClient` masks them in all log output.
 - Actuator endpoints are publicly accessible for health checks and monitoring.
 
 ---
