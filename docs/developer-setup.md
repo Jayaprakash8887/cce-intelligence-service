@@ -41,7 +41,7 @@ docker compose up -d
 docker compose ps
 ```
 
-> **Note:** The Intelligence Service has read access to all Compliance Service tables (`protocol_definition`, `protocol_instance`, `step_instance`, `action_definition`, `action_run`, `deviation`, `action_run_context`, `trigger_index`, `event_log`, `audit_log`). Ensure the Compliance Service has run its Flyway migrations before starting the Intelligence Service.
+> **Note:** The Intelligence Service does **not** read Compliance Service tables at runtime (fat event design). It only requires `protocol_definition` to exist in the shared database for the FK on `channel_subscription`. Ensure the Compliance Service has run its Flyway migrations before starting the Intelligence Service.
 
 ### 2.3 Run the Application
 
@@ -168,14 +168,10 @@ cce-intelligence-service/
 │       │   ├── domain/          # Entities, enums, repositories
 │       │   │   ├── entity/      # DeliveryRun, ReceiverAdaptor, ChannelSubscription, DeliveryAuditLog
 │       │   │   ├── enums/       # DeliveryRunStatus, ActionType, IntelligenceSeverity
-│       │   ├── readonly/    # ProtocolDefinition, ProtocolInstance, StepInstance, ActionRun,
-│       │   │   │                #   ActionDefinition, Deviation, ActionRunContext (immutable, Compliance-owned)
 │       │   │   └── repository/  # JPA repositories for all entities
 │       │   ├── engine/          # Intelligence processing pipeline
 │       │   │   ├── IntelligenceEngine.java   # Core orchestrator
-│       │   │   ├── IntelligenceActionEvaluator.java        # JSONLogic condition evaluation
-│       │   │   ├── ActionResolver.java       # Resolve definitionCanonical → ActionDefinition (read-only)
-│       │   │   ├── TemplateRenderer.java     # Render message templates with context
+│       │   │   ├── FhirPayloadBuilder.java   # Builds FHIR CommunicationRequest or Task from trigger event
 │       │   │   ├── SubscriptionRouter.java   # Resolve channel → Receiver Adaptors via channel_subscription
 │       │   │   └── ActionDispatcher.java     # Fan-out deliver to subscribed Receiver Adaptors
 │       │   ├── kafka/           # Kafka consumer
@@ -202,14 +198,14 @@ cce-intelligence-service/
 
 ## 5. Database Setup
 
-All CCE services share the same database (`cce_collector`) on the PostgreSQL instance deployed by the CCE Collector Service (port `5433`, user `cce_user`). The Intelligence Service owns **4 tables** and reads **7 tables** from the Compliance Service.
+All CCE services share the same database (`cce_collector`) on the PostgreSQL instance deployed by the CCE Collector Service (port `5433`, user `cce_user`). The Intelligence Service owns **4 tables** and does **not** read any Compliance Service tables at runtime (fat event design).
 
 ### 5.1 Table Ownership
 
 | Category | Tables |
 |---|---|
 | **Owned (4)** | `receiver_adaptor`, `channel_subscription`, `delivery_run`, `delivery_audit_log` |
-| **Read-only (5)** | `protocol_definition`, `protocol_instance`, `step_instance`, `action_definition`, `action_run` |
+| **FK reference only** | `protocol_definition` — referenced by `channel_subscription.protocol_definition_id` FK; not read at runtime (routing uses `protocolDefinitionId` from the trigger event) |
 
 ### 5.2 No Separate Database Creation Needed
 
@@ -217,7 +213,7 @@ The database is created by the collector service's Docker Compose. The Intellige
 
 ### 5.3 Prerequisite: Compliance Service Schema
 
-The Intelligence Service reads from compliance-owned tables (`protocol_definition`, `protocol_instance`, `step_instance`, `action_definition`, `action_run`). Ensure the Compliance Service has run its Flyway migrations before starting the Intelligence Service.
+The `channel_subscription` table has a FK to `protocol_definition(id)`, which is owned by the Compliance Service. Ensure the Compliance Service has run its Flyway migration that creates the `protocol_definition` table before starting the Intelligence Service. No other Compliance tables are accessed at runtime — the fat event design carries all metadata needed for trigger processing.
 
 ### 5.4 Flyway Migrations
 
@@ -310,7 +306,7 @@ Stage 2: Runtime (eclipse-temurin:21-jre-alpine)
 
 ```bash
 # Run a specific test class
-./gradlew test --tests "org.openphc.cce.intelligence.engine.IntelligenceActionEvaluatorTest"
+./gradlew test --tests "org.openphc.cce.intelligence.engine.IntelligenceEngineTest"
 
 # Run tests matching a pattern
 ./gradlew test --tests "*Dispatcher*"

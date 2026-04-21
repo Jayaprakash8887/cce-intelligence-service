@@ -139,7 +139,6 @@ Published by the Compliance Service (v1.1.0+) when an intelligence action's cond
   "actionType": "ESCALATION",
   "severity": "HIGH",
   "intelligenceChannel": "supervisor",
-  "deviationType": "overdue",
   "stepState": "overdue",
   "actionId": "anc-visit-2",
   "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",

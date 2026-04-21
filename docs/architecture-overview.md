@@ -170,7 +170,6 @@ src/main/java/org/openphc/cce/intelligence/
 │   ├── enums/
 │   │   ├── DeliveryRunStatus.java                 # PENDING, EXECUTING, DELIVERED, FAILED, CANCELLED
 │   │   ├── ActionType.java                        # NOTIFICATION, ESCALATION, COORDINATION
-│   │   ├── DeliveryMode.java                      # WEBHOOK (1.0.0); TOPIC_SUBSCRIPTION (future)
 │   │   └── IntelligenceSeverity.java              # LOW, MEDIUM, HIGH, CRITICAL
 │   └── repository/
 │       ├── DeliveryRunRepository.java
@@ -305,7 +304,7 @@ The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from
     { "display": "anc-visit-2" }
   ],
   "payload": [{
-    "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 (PlanDefinition/anc-high-risk|2.1)"
+    "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)"
   }],
   "recipient": [{ "display": "supervisor" }],
   "authoredOn": "2026-04-15T00:00:05Z",
@@ -345,7 +344,7 @@ The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from
       "display": "Coordination"
     }]
   },
-  "description": "[CRITICAL] COORDINATION for patient 260225-0002-5501 — step anc-visit-2 (PlanDefinition/anc-high-risk|2.1)",
+  "description": "[CRITICAL] COORDINATION for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)",
   "for": {
     "identifier": { "system": "http://openphc.org/fhir/patient-upid", "value": "260225-0002-5501" }
   },
@@ -377,7 +376,7 @@ The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from
 | `category` / `code` | Action type coding | Action type coding | `trigger.actionType` |
 | `subject` / `for` | Patient UPID | Patient UPID | `trigger.subject` |
 | `about` | Protocol + action ID | — | `trigger.protocolCanonical`, `trigger.actionId` |
-| `payload.contentString` / `description` | Auto-generated summary | Auto-generated summary | `FhirPayloadBuilder` |
+| `payload.contentString` / `description` | Auto-generated summary (includes stepState) | Auto-generated summary (includes stepState) | `FhirPayloadBuilder` |
 | `recipient` | Channel name | — | `trigger.intelligenceChannel` |
 | `authoredOn` | Detection time | Detection time | `trigger.detectedAt` |
 | `extension.*` | Step state | Same | Trigger event fields |
@@ -508,7 +507,8 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 
 - **Authentication & Authorization:** Handled by the **CCE API Gateway**. This service does not implement security directly — all requests arrive pre-authenticated.
 - **Webhook credentials:** Stored in `receiver_adaptor.config` JSONB (separate from the FHIR Endpoint in `definition`). The **external Receiver Adaptor operator** generates and manages their own auth credentials (API keys, bearer tokens, mTLS certs). A CCE admin registers the adaptor via `POST /v1/receiver-adaptors`, placing the operator-provided credentials into `config`. The `WebhookDeliveryClient` reads `authHeader` + `authValue` at dispatch time and injects them into the outbound HTTP request. The Intelligence Service never *issues* tokens — it only *stores and presents* credentials that the receiving system expects.
-- **Credential protection:** `authValue` in `receiver_adaptor.config` should be encrypted at rest in production (e.g., via PostgreSQL pgcrypto or application-level encryption). Credentials are **never logged** — the `WebhookDeliveryClient` masks them in all log output.
+- **Credential protection:** `authValue` in `receiver_adaptor.config` should be encrypted at rest in production (e.g., via PostgreSQL pgcrypto or application-level encryption). Credentials are **never logged** — the `WebhookDeliveryClient` masks them in all log output. `authValue` is **never returned** in REST API responses — DTOs mask it (e.g., `sk-***123`).
+- **Webhook request signing (HMAC):** Each Receiver Adaptor can configure a `webhookSecret` in `config`. When present, the `WebhookDeliveryClient` computes `HMAC-SHA256(webhookSecret, requestBody)` and sends it as the `X-CCE-Signature-256` header. The receiving system verifies the signature to ensure the request is authentically from the CCE platform. This prevents spoofing — critical for healthcare delivery endpoints.
 - Actuator endpoints are publicly accessible for health checks and monitoring.
 
 ---
@@ -572,3 +572,4 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 | **Kafka** | 3 concurrent listener threads per instance |
 | **API** | Stateless — any instance serves any request |
 | **Fan-out** | Delivery runs are created per-adaptor; concurrent webhook calls via WebClient's non-blocking I/O |
+| **Data retention** | `delivery_run` and `delivery_audit_log` are high-growth tables. Partition by `created_at` using `pg_partman` or native PostgreSQL range partitioning. Archive partitions older than the configured retention period (default: 90 days) to cold storage. Regulatory retention requirements may extend this — consult compliance policy |

@@ -52,7 +52,6 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
       "id": "b2c3d4e5-0001-4000-b000-000000000001",
       "actionRunId": "990e8400-e29b-41d4-a716-446655440010",
       "actionDefinitionId": "a1b2c3d4-0001-4000-a000-000000000001",
-      "actionDefinitionName": "ANC Overdue Alert",
       "actionType": "NOTIFICATION",
       "actionId": "anc-visit-2",
       "channel": "supervisor",
@@ -96,7 +95,6 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
     "id": "b2c3d4e5-0001-4000-b000-000000000001",
     "actionRunId": "990e8400-e29b-41d4-a716-446655440010",
     "actionDefinitionId": "a1b2c3d4-0001-4000-a000-000000000001",
-    "actionDefinitionName": "ANC Overdue Alert",
     "actionType": "NOTIFICATION",
     "actionId": "anc-visit-2",
     "channel": "supervisor",
@@ -113,7 +111,7 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
       "priority": "urgent",
       "category": [{ "coding": [{ "system": "http://cce.openphc.org/fhir/action-type", "code": "NOTIFICATION" }] }],
       "subject": { "identifier": { "system": "urn:cce:upid", "value": "260225-0002-5501" } },
-      "payload": [{ "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 (PlanDefinition/anc-high-risk|2.1)" }]
+      "payload": [{ "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)" }]
     },
     "deliveryResult": {
       "httpStatus": 200,
@@ -471,7 +469,7 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
     "status": "ACTIVE",
     "config": {
       "authHeader": "X-API-Key",
-      "authValue": "sk-abc123",
+      "authValue": "sk-***123",
       "timeoutMs": 10000
     },
     "createdAt": "2026-03-20T08:00:00Z",
@@ -479,6 +477,8 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
   }
 }
 ```
+
+> **Note:** `authValue` is masked in all API responses. Full credentials are accepted on write operations (`POST`, `PUT`) but never returned.
 
 | Error Status | Condition |
 |:-------------|:----------|
@@ -526,7 +526,7 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
         "address": "https://sms-gateway.example.com/webhook/intelligence"
       },
       "status": "ACTIVE",
-      "config": { ... },
+      "config": { "authHeader": "X-API-Key", "authValue": "sk-***123" },
       "createdAt": "2026-03-20T08:00:00Z",
       "updatedAt": "2026-03-20T08:00:00Z"
     }
@@ -593,6 +593,8 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
   }
 }
 ```
+
+> **Note:** `authValue` is accepted in full on `PUT` requests but will be masked in the response.
 
 **Response:** `200 OK` — Updated `ReceiverAdaptorDto`
 

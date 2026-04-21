@@ -82,7 +82,7 @@ erDiagram
     }
 ```
 
-> **No read-only tables.** The trigger event is self-contained (fat event) — the Intelligence Service does **not** read any Compliance Service tables (`action_run`, `action_definition`, `protocol_definition`, etc.) during processing. The `action_run_id` and `action_definition_id` columns on `delivery_run` are stored for traceability and cross-service correlation, not as runtime FKs.
+> **No read-only tables on the hot path.** The trigger event is self-contained (fat event) — the Intelligence Service does **not** read any Compliance Service tables (`action_run`, `action_definition`, etc.) during trigger processing. The `action_run_id` and `action_definition_id` columns on `delivery_run` are populated from the trigger event for traceability, not as runtime FKs. The `channel_subscription.protocol_definition_id` FK references `protocol_definition` for referential integrity; `protocol_definition` may be joined in low-frequency **admin REST queries** (e.g., to display `protocolCanonical` in channel subscription DTOs) but is never accessed on the trigger processing path.
 
 ---
 
@@ -365,14 +365,17 @@ A **FHIR R4 Endpoint** resource describing the adaptor's identity, connection ty
 
 **Credential ownership:** The external Receiver Adaptor operator generates and manages their own auth credentials (API keys, bearer tokens, etc.). A CCE admin registers the adaptor via `POST /v1/receiver-adaptors`, placing the operator-provided credentials into `config`. The `WebhookDeliveryClient` reads `authHeader` + `authValue` at dispatch time and injects them into the outbound HTTP request. The Intelligence Service never *issues* tokens — it only *stores and presents* credentials that the receiving system expects.
 
-> **Security note:** `authValue` contains sensitive credentials and should be encrypted at rest in production (e.g., via PostgreSQL pgcrypto or application-level encryption). Credentials are **never logged** — the `WebhookDeliveryClient` masks them in all log output.
+> **Security note:** `authValue` contains sensitive credentials and should be encrypted at rest in production (e.g., via PostgreSQL pgcrypto or application-level encryption). Credentials are **never logged** — the `WebhookDeliveryClient` masks them in all log output. `authValue` is **never returned** in REST API responses — DTOs mask it (e.g., `sk-***123`).
 
-> **Separation of concerns:** The FHIR Endpoint in `definition` describes *what* the adaptor is and *where* to deliver. The `config` JSONB stores *how* to authenticate and operational overrides — concerns that are outside the FHIR Endpoint spec.
+> **Webhook signing (HMAC):** When `webhookSecret` is configured, the `WebhookDeliveryClient` computes `HMAC-SHA256(webhookSecret, requestBody)` and sends it as the `X-CCE-Signature-256` header. The receiving system verifies the signature to confirm the request originates from the CCE platform. If `webhookSecret` is `null`, signing is skipped (backward compatible).
+
+> **Separation of concerns:** The FHIR Endpoint in `definition` describes *what* the adaptor is and *where* to deliver. The `config` JSONB stores *how* to authenticate, sign, and operational overrides — concerns that are outside the FHIR Endpoint spec.
 
 ```json
 {
   "authHeader": "X-API-Key",
   "authValue": "********",
+  "webhookSecret": "whsec_abc123...",
   "timeoutMs": 10000,
   "retryOverride": {
     "maxAttempts": 5,
@@ -414,7 +417,7 @@ The FHIR R4-compliant resource sent to the Receiver Adaptor. Resource type depen
     { "display": "anc-visit-2" }
   ],
   "payload": [{
-    "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 (PlanDefinition/anc-high-risk|2.1)"
+    "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)"
   }],
   "recipient": [{ "display": "supervisor" }],
   "authoredOn": "2026-04-15T00:00:05Z",
@@ -475,3 +478,18 @@ Content varies by event type:
 | `cce.intelligence.webhook.duration` | Timer | `adaptor_name` | Webhook response time |
 | `cce.intelligence.consumer.errors` | Counter | — | Consumer processing errors |
 | `cce.intelligence.subscriptions.active` | Gauge | — | Active channel subscriptions |
+
+---
+
+## 12. Data Retention
+
+`delivery_run` and `delivery_audit_log` are high-growth tables (one row per action_run × adaptor, plus audit entries per lifecycle event). Without a retention strategy, these tables will grow unbounded.
+
+| Strategy | Table | Details |
+|---|---|---|
+| **Range partitioning** | `delivery_run`, `delivery_audit_log` | Partition by `created_at` / `timestamp` using native PostgreSQL range partitioning or `pg_partman` for automated partition management. Monthly partitions recommended. |
+| **Active retention** | Both | Keep the most recent 90 days in active partitions for operational queries. |
+| **Archive** | Both | Detach and move partitions older than the retention window to cold storage (S3, Azure Blob). Retain for regulatory compliance period (consult healthcare data retention policy). |
+| **Indexes** | Both | Partial indexes on `status` (e.g., `WHERE status = 'FAILED'`) ensure fast queries on active data without scanning archived partitions. |
+
+> **Regulatory note:** Healthcare compliance may require retaining delivery records for extended periods (e.g., 7 years). The archival strategy must balance operational performance with regulatory retention requirements.

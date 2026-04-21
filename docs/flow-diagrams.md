@@ -26,9 +26,9 @@ flowchart LR
     CS[Compliance Service] -->|IntelligenceTriggerEvent<br/>self-contained fat event| K[Kafka<br/>cce.intelligence.triggers]
     K -->|consume| IC[Intelligence<br/>Consumer]
     IC --> IE[Intelligence<br/>Engine]
-    IE --> FB[FHIR Payload<br/>Builder]
-    FB --> SR[Subscription<br/>Router]
-    SR --> AD[Action<br/>Dispatcher]
+    IE --> SR[Subscription<br/>Router]
+    SR --> FB[FHIR Payload<br/>Builder]
+    FB --> AD[Action<br/>Dispatcher]
     AD -->|HTTP POST| RA1[Receiver<br/>Adaptor #1]
     AD -->|HTTP POST| RA2[Receiver<br/>Adaptor #2]
 
@@ -214,7 +214,7 @@ sequenceDiagram
     Dispatcher->>Audit: log(DISPATCHED, adaptorName, definition.address)
 
     Dispatcher->>Adaptor: HTTP POST definition.address
-    Note right of Adaptor: Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id: {runId}<br/>X-CCE-Action-Run-Id: {actionRunId}<br/>+ adaptor auth headers from config
+    Note right of Adaptor: Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id: {runId}<br/>X-CCE-Action-Run-Id: {actionRunId}<br/>X-CCE-Signature-256: HMAC-SHA256 (if configured)<br/>+ adaptor auth headers from config
 
     alt HTTP 2xx
         Adaptor-->>Dispatcher: 200 OK
