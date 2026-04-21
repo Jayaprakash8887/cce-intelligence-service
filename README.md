@@ -1,16 +1,15 @@
 # CCE Intelligence Service
 
-The **delivery engine** of the CCE platform. Consumes intelligence trigger events from the Compliance Service via Kafka, builds **FHIR R4-compliant payloads** (`CommunicationRequest` / `Task`), resolves routing via **target subscriptions**, and delivers actions to registered **Receiver Adaptors** via webhook.
+The **delivery engine** of the CCE platform. Consumes **self-contained** intelligence trigger events from the Compliance Service via Kafka, builds **FHIR R4-compliant payloads** (`CommunicationRequest` / `Task`), resolves routing via **channel subscriptions** (with step-level granularity), and delivers actions to registered **Receiver Adaptors** via webhook.
 
-> The Compliance Service evaluates *when* and *what* to act on. This service handles *where* (routing) and *how* (FHIR payload + webhook delivery).
+> The Compliance Service evaluates *when* and *what* to act on, resolving all metadata into a self-contained trigger event. This service handles *where* (step-level routing via channel subscriptions) and *how* (FHIR payload + webhook delivery) — with **zero Compliance table reads** on the hot path.
 
 ## Architecture
 
 ```
 Compliance Service → Kafka → Intelligence Consumer → Intelligence Engine
-  → Load ActionRun + ActionDefinition
-  → Build FHIR Payload (CommunicationRequest or Task)
-  → Resolve Target Subscriptions
+  → Build FHIR Payload from trigger event (CommunicationRequest or Task)
+  → Resolve Channel Subscriptions (protocol × action_id × channel)
   → Fan-out Webhook Delivery → Receiver Adaptors
 ```
 
@@ -38,16 +37,14 @@ Health check: `http://localhost:8083/actuator/health`
 
 ## Database
 
-The service owns 4 tables and reads 2 from the Compliance Service:
+The service owns 4 tables (zero read-only Compliance dependencies at runtime):
 
 | Table | Owner | Purpose |
-|-------|-------|---------|
+|-------|-------|--------|
 | `delivery_run` | Intelligence | Delivery lifecycle per (action_run × adaptor) |
 | `receiver_adaptor` | Intelligence | Registered webhook endpoints |
-| `target_subscription` | Intelligence | Many-to-many routing map |
+| `channel_subscription` | Intelligence | Many-to-many routing map (protocol × action_id × channel → adaptors) |
 | `delivery_audit_log` | Intelligence | Audit trail |
-| `action_run` | Compliance (read-only) | FK anchor for delivery tracking |
-| `action_definition` | Compliance (read-only) | Action type, severity, target |
 
 ## Kafka Topics
 
@@ -69,18 +66,18 @@ All requests arrive via the **CCE Gateway Service** (pre-authenticated).
 | `POST` | `/v1/receiver-adaptors` | Register a receiver adaptor |
 | `PUT` | `/v1/receiver-adaptors/{id}` | Update a receiver adaptor |
 | `DELETE` | `/v1/receiver-adaptors/{id}` | Delete a receiver adaptor |
-| `GET` | `/v1/target-subscriptions` | List target subscriptions |
-| `POST` | `/v1/target-subscriptions` | Create a target subscription |
-| `PUT` | `/v1/target-subscriptions/{id}` | Update a target subscription |
-| `DELETE` | `/v1/target-subscriptions/{id}` | Delete a target subscription |
+| `GET` | `/v1/channel-subscriptions` | List channel subscriptions |
+| `POST` | `/v1/channel-subscriptions` | Create a channel subscription |
+| `PUT` | `/v1/channel-subscriptions/{id}` | Update a channel subscription |
+| `DELETE` | `/v1/channel-subscriptions/{id}` | Delete a channel subscription |
 
 ## Project Structure
 
-~30 source files across 11 packages. Key components:
+~26 source files across 10 packages. Key components:
 
 - **`engine/IntelligenceEngine`** — Core orchestrator (trigger → payload → route → deliver)
-- **`engine/FhirPayloadBuilder`** — Builds FHIR CommunicationRequest or Task
-- **`engine/SubscriptionRouter`** — Resolves (protocol, target) → adaptors
+- **`engine/FhirPayloadBuilder`** — Builds FHIR CommunicationRequest or Task from trigger event fields
+- **`engine/SubscriptionRouter`** — Resolves (protocol, actionId, channel) → adaptors with step-level precedence
 - **`engine/ActionDispatcher`** — Fan-out webhook delivery
 
 ## Documentation

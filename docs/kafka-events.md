@@ -127,15 +127,19 @@ cce.kafka:
 
 ## 4. Inbound Message Schema — IntelligenceTriggerEvent
 
-Published by the Compliance Service (v1.1.0+) when an intelligence action's condition matches — triggered by a step's state change.
+Published by the Compliance Service (v1.1.0+) when an intelligence action's condition matches — triggered by a step's state change. The event is **self-contained** — the Compliance Service resolves all routing and payload metadata at publish time (action type, severity, intelligence channel, facility, protocol definition), so the Intelligence Service requires **zero Compliance table reads** on the hot path.
 
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440099",
   "subject": "260225-0002-5501",
   "actionRunId": "990e8400-e29b-41d4-a716-446655440010",
-  "protocolInstanceId": "660e8400-e29b-41d4-a716-446655440001",
-  "stepInstanceId": "770e8400-e29b-41d4-a716-446655440002",
+  "actionDefinitionId": "aad-0001-0001-0001-000000000001",
+  "protocolDefinitionId": "ppd-0001-0001-0001-000000000001",
+  "actionType": "ESCALATION",
+  "severity": "HIGH",
+  "intelligenceChannel": "supervisor",
+  "facilityId": "0002",
   "deviationType": "overdue",
   "stepState": "overdue",
   "actionId": "anc-visit-2",
@@ -149,19 +153,25 @@ Published by the Compliance Service (v1.1.0+) when an intelligence action's cond
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | UUID | Yes | Unique trigger event identifier. Correlates with Compliance Service's `action_run.intelligence_event_id`. |
-| `subject` | String | Yes | Patient UPID (e.g., `260225-0002-5501`). Facility code embedded at positions 7-10. |
-| `actionRunId` | UUID | Yes | FK to Compliance Service's `action_run.id` — idempotency anchor for `delivery_run`. Starting point for routing: `action_run → action_definition → target`. |
-| `protocolInstanceId` | UUID | Yes | Protocol instance that triggered the event |
-| `stepInstanceId` | UUID | Yes | Step instance that triggered the event |
+| `subject` | String | Yes | Patient UPID (e.g., `260225-0002-5501`). |
+| `actionRunId` | UUID | Yes | FK to Compliance Service's `action_run.id` — idempotency anchor for `delivery_run`. |
+| `actionDefinitionId` | UUID | Yes | FK to Compliance Service's `action_definition.id` — stored on `delivery_run` for traceability. |
+| `protocolDefinitionId` | UUID | Yes | FK to `protocol_definition.id` — routing key for `channel_subscription` lookup. Resolved by Compliance from `action_run → protocol_instance → protocol_definition`. |
+| `actionType` | String | Yes | `NOTIFICATION`, `ESCALATION`, or `COORDINATION`. Determines FHIR resource type (CommunicationRequest vs Task). Resolved from `action_definition.action_type`. |
+| `severity` | String | Yes | Effective severity: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`. Resolved by Compliance from PlanDefinition extension `intelligence-severity`, falling back to `action_definition.severity`. |
+| `intelligenceChannel` | String | Yes | Effective routing channel (e.g., `supervisor`, `patient-reminder`). Resolved by Compliance from PlanDefinition extension `intelligence-channel`, falling back to `action_definition.intelligence_channel`. Used with `protocolDefinitionId` + `actionId` for `channel_subscription` routing. |
+| `facilityId` | String | No | Facility code (e.g., `0002`). Resolved by Compliance from context (explicit facility context, not parsed from UPID). |
 | `deviationType` | String | No | `overdue`, `missed`, or `null` for late-completion triggers |
 | `stepState` | String | Yes | Current step state (lowercase): `overdue`, `missed`, `completed` |
-| `actionId` | String | Yes | PlanDefinition action ID (e.g., `anc-visit-2`) |
+| `actionId` | String | Yes | PlanDefinition action ID (e.g., `anc-visit-2`). Used for step-level routing in `channel_subscription`. |
 | `protocolCanonical` | String | Yes | Protocol `url\|version` |
 | `detectedAt` | OffsetDateTime | Yes | When the event was detected |
 
+> **Design rationale (fat event):** By including `actionDefinitionId`, `protocolDefinitionId`, `actionType`, `severity`, `intelligenceChannel`, and `facilityId` in the event, the Intelligence Service eliminates all Compliance table reads (`action_run`, `action_definition`, `protocol_instance`, `protocol_definition`, `step_instance`) from the processing hot path. This is safe because ActivityDefinitions and PlanDefinitions are immutable once published — the values at trigger time are the correct values for the lifetime of the `action_run`.
+
 ### Message Key
 
-**Kafka Key:** `protocolInstanceId` — ensures all triggers for the same protocol instance go to the same partition, maintaining ordering.
+**Kafka Key:** `actionRunId` — ensures each trigger event is uniquely keyed. The Compliance Service uses `event.getActionRunId().toString()` as the Kafka record key.
 
 ### Trigger Type Derivation
 
@@ -197,8 +207,12 @@ Use this derived type for the `cce.intelligence.triggers.received` counter tag.
   "id": "550e8400-e29b-41d4-a716-446655440099",
   "subject": "260225-0002-5501",
   "actionRunId": "990e8400-e29b-41d4-a716-446655440010",
-  "protocolInstanceId": "660e8400-e29b-41d4-a716-446655440001",
-  "stepInstanceId": "770e8400-e29b-41d4-a716-446655440002",
+  "actionDefinitionId": "aad-0001-0001-0001-000000000001",
+  "protocolDefinitionId": "ppd-0002-0002-0002-000000000002",
+  "actionType": "NOTIFICATION",
+  "severity": "MEDIUM",
+  "intelligenceChannel": "supervisor",
+  "facilityId": "0002",
   "deviationType": "overdue",
   "stepState": "overdue",
   "actionId": "viral-load-check",
@@ -214,8 +228,12 @@ Use this derived type for the `cce.intelligence.triggers.received` counter tag.
   "id": "550e8400-e29b-41d4-a716-446655440100",
   "subject": "260115-0001-7823",
   "actionRunId": "990e8400-e29b-41d4-a716-446655440011",
-  "protocolInstanceId": "770e8400-e29b-41d4-a716-446655440003",
-  "stepInstanceId": "880e8400-e29b-41d4-a716-446655440004",
+  "actionDefinitionId": "aad-0001-0001-0001-000000000002",
+  "protocolDefinitionId": "ppd-0001-0001-0001-000000000001",
+  "actionType": "ESCALATION",
+  "severity": "HIGH",
+  "intelligenceChannel": "supervisor",
+  "facilityId": "0001",
   "deviationType": "missed",
   "stepState": "missed",
   "actionId": "anc-visit-3",
@@ -231,8 +249,12 @@ Use this derived type for the `cce.intelligence.triggers.received` counter tag.
   "id": "550e8400-e29b-41d4-a716-446655440101",
   "subject": "260225-0002-5501",
   "actionRunId": "990e8400-e29b-41d4-a716-446655440012",
-  "protocolInstanceId": "660e8400-e29b-41d4-a716-446655440001",
-  "stepInstanceId": "770e8400-e29b-41d4-a716-446655440002",
+  "actionDefinitionId": "aad-0001-0001-0001-000000000001",
+  "protocolDefinitionId": "ppd-0001-0001-0001-000000000001",
+  "actionType": "NOTIFICATION",
+  "severity": "LOW",
+  "intelligenceChannel": "patient-reminder",
+  "facilityId": "0002",
   "deviationType": null,
   "stepState": "completed",
   "actionId": "anc-visit-2",
@@ -282,8 +304,8 @@ public void consume(IntelligenceTriggerEvent event) {
 | Guarantee | Mechanism |
 |---|---|
 | **At-least-once delivery** | `AckMode.RECORD` + `DefaultErrorHandler` + no auto-commit |
-| **Idempotency** | `(actionRunId, targetSubscriptionId)` uniqueness on `delivery_run` |
-| **Ordering (per partition)** | Key-based routing on `protocolInstanceId` ensures ordering per protocol instance |
+| **Idempotency** | `(actionRunId, channelSubscriptionId)` uniqueness on `delivery_run` |
+| **Ordering (per partition)** | Key-based routing on `actionRunId` ensures one trigger per key |
 | **Transactional reads** | `isolation.level=read_committed` prevents reading uncommitted |
 
 ---

@@ -9,7 +9,7 @@
 
 1. [End-to-End Intelligence Pipeline](#1-end-to-end-intelligence-pipeline)
 2. [Trigger Processing Sequence](#2-trigger-processing-sequence)
-3. [Target Subscription Routing](#3-target-subscription-routing)
+3. [Channel Subscription Routing](#3-channel-subscription-routing)
 4. [Action Dispatch & Webhook Delivery](#4-action-dispatch--webhook-delivery)
 5. [Delivery Run Lifecycle](#5-delivery-run-lifecycle)
 6. [Retry & Error Handling](#6-retry--error-handling)
@@ -19,11 +19,11 @@
 
 ## 1. End-to-End Intelligence Pipeline
 
-High-level data flow from Compliance Service trigger through to Receiver Adaptor delivery. The Compliance Service handles all condition evaluation; this service is purely a routing and delivery engine.
+High-level data flow from Compliance Service trigger through to Receiver Adaptor delivery. The Compliance Service handles all condition evaluation and publishes a **self-contained** trigger event; this service is purely a routing and delivery engine with **zero Compliance table reads** on the hot path.
 
 ```mermaid
 flowchart LR
-    CS[Compliance Service] -->|IntelligenceTriggerEvent| K[Kafka<br/>cce.intelligence.triggers]
+    CS[Compliance Service] -->|IntelligenceTriggerEvent<br/>self-contained fat event| K[Kafka<br/>cce.intelligence.triggers]
     K -->|consume| IC[Intelligence<br/>Consumer]
     IC --> IE[Intelligence<br/>Engine]
     IE --> FB[FHIR Payload<br/>Builder]
@@ -45,8 +45,7 @@ flowchart LR
         RA2
     end
 
-    IE -.->|read action_run,<br/>action_definition| DB[(PostgreSQL)]
-    SR -.->|read target_subscription| DB
+    SR -.->|read channel_subscription| DB[(PostgreSQL)]
     AD -.->|write delivery_run| DB
 ```
 
@@ -54,7 +53,7 @@ flowchart LR
 
 ## 2. Trigger Processing Sequence
 
-Detailed sequence diagram showing the interaction between components when processing an intelligence trigger with fan-out delivery.
+Detailed sequence diagram showing the interaction between components when processing an intelligence trigger with fan-out delivery. The trigger event is self-contained — no Compliance table lookups needed.
 
 ```mermaid
 sequenceDiagram
@@ -68,29 +67,24 @@ sequenceDiagram
     participant Webhook1 as Receiver Adaptor #1
     participant Webhook2 as Receiver Adaptor #2
 
-    Kafka->>Consumer: IntelligenceTriggerEvent
+    Kafka->>Consumer: IntelligenceTriggerEvent (fat event)
     Consumer->>Engine: processTrigger(event)
 
     Note over Engine,DB: Step 1 — Idempotency Check
     Engine->>DB: findDeliveredSubscriptions(actionRunId)
     DB-->>Engine: already-delivered set (may be empty)
 
-    Note over Engine,DB: Step 2 — Load ActionRun + ActionDefinition
-    Engine->>DB: findById(actionRunId)
-    DB-->>Engine: ActionRun (action_definition_id)
-    Engine->>DB: findById(action_definition_id)
-    DB-->>Engine: ActionDefinition (action_type, severity, target)
-
-    Note over Engine,Router: Step 3 — Resolve Target Subscriptions
-    Engine->>Router: findSubscriptions(protocolDefinitionId, target)
-    Router->>DB: query target_subscription + receiver_adaptor
-    DB-->>Router: TargetSubscription list with adaptors
+    Note over Engine,Router: Step 2 — Resolve Channel Subscriptions (step-level)
+    Engine->>Router: findSubscriptions(protocolDefinitionId, actionId, intelligenceChannel)
+    Router->>DB: query channel_subscription + receiver_adaptor<br/>WHERE action_id = :actionId OR action_id IS NULL<br/>ORDER BY action_id NULLS LAST
+    DB-->>Router: ChannelSubscription list with adaptors
+    Router->>Router: Deduplicate (step-specific overrides wildcard)
     Router-->>Engine: [Adaptor #1, Adaptor #2] minus already-delivered
 
-    Note over Engine,Dispatcher: Step 4 — Fan-Out Delivery
+    Note over Engine,Dispatcher: Step 3 — Fan-Out Delivery
     par Deliver to Adaptor #1
         Engine->>DB: save(DeliveryRun [PENDING] for Adaptor #1)
-        Engine->>Builder: build(triggerEvent, actionDefinition, deliveryRunId)
+        Engine->>Builder: build(triggerEvent, deliveryRunId)
         Builder-->>Engine: FHIR CommunicationRequest / Task
         Engine->>Dispatcher: dispatch(deliveryRun, fhirPayload, adaptor1)
         Dispatcher->>DB: update(DeliveryRun [EXECUTING])
@@ -99,7 +93,7 @@ sequenceDiagram
         Dispatcher->>DB: update(DeliveryRun [DELIVERED])
     and Deliver to Adaptor #2
         Engine->>DB: save(DeliveryRun [PENDING] for Adaptor #2)
-        Engine->>Builder: build(triggerEvent, actionDefinition, deliveryRunId)
+        Engine->>Builder: build(triggerEvent, deliveryRunId)
         Builder-->>Engine: FHIR CommunicationRequest / Task
         Engine->>Dispatcher: dispatch(deliveryRun, fhirPayload, adaptor2)
         Dispatcher->>DB: update(DeliveryRun [EXECUTING])
@@ -114,17 +108,18 @@ sequenceDiagram
 
 ---
 
-## 3. Target Subscription Routing
+## 3. Channel Subscription Routing
 
-How the Intelligence Service resolves which Receiver Adaptors should receive a delivery for a given protocol + target combination.
+How the Intelligence Service resolves which Receiver Adaptors should receive a delivery for a given protocol + action_id + channel combination. Step-specific subscriptions (`action_id` not NULL) take precedence over wildcard subscriptions (`action_id` IS NULL).
 
 ```mermaid
 flowchart TD
-    ACTION["Action fires for ANC High-Risk v2.1<br/>target = 'supervisor'"] --> QUERY["Query target_subscription<br/>WHERE protocol_definition_id = :pdId<br/>AND target = 'supervisor'<br/>AND status = 'ACTIVE'"]
+    ACTION["Action fires for ANC High-Risk v2.1<br/>actionId = 'anc-visit-2', channel = 'supervisor'"] --> QUERY["Query channel_subscription<br/>WHERE protocol_definition_id = :pdId<br/>AND channel = 'supervisor'<br/>AND (action_id = 'anc-visit-2' OR action_id IS NULL)<br/>AND status = 'ACTIVE'<br/>ORDER BY action_id NULLS LAST"]
     QUERY --> JOIN["JOIN receiver_adaptor<br/>WHERE status = 'ACTIVE'"]
-    JOIN --> RESULT{Subscriptions found?}
+    JOIN --> DEDUP["Deduplicate: step-specific<br/>subscriptions override wildcards<br/>for same adaptor"]
+    DEDUP --> RESULT{Subscriptions found?}
 
-    RESULT -->|None| FAIL["Create DeliveryRun<br/>status = FAILED<br/>error = 'No active subscription for target'"]
+    RESULT -->|None| FAIL["Create DeliveryRun<br/>status = FAILED<br/>error = 'No active subscription for channel'"]
     RESULT -->|1 adaptor| SINGLE["Create 1 DeliveryRun"]
     RESULT -->|N adaptors| FANOUT["Create N DeliveryRuns<br/>(one per adaptor)"]
 
@@ -134,21 +129,52 @@ flowchart TD
     FANOUT --> DN["Dispatch to Adaptor #N"]
 ```
 
+### Step-Level Routing Example
+
+```mermaid
+flowchart TD
+    subgraph "ANC High-Risk v2.1"
+        T1["actionId: anc-visit-2<br/>channel: supervisor"]
+        T2["actionId: lab-test-1<br/>channel: supervisor"]
+        T3["actionId: any other step<br/>channel: supervisor"]
+        T4["channel: patient-reminder"]
+    end
+
+    subgraph Channel Subscriptions
+        TS1["ANC + anc-visit-2 + supervisor → CHW Lead SMS"]
+        TS2["ANC + lab-test-1 + supervisor → Lab Coordinator"]
+        TS3["ANC + NULL + supervisor → Dashboard (wildcard)"]
+        TS4["ANC + NULL + patient-reminder → WhatsApp Bot"]
+    end
+
+    subgraph Receiver Adaptors
+        A1["CHW Lead SMS Gateway"]
+        A2["Lab Coordinator Dashboard"]
+        A3["CCE Dashboard Adaptor"]
+        A4["WhatsApp Bot"]
+    end
+
+    T1 --> TS1 --> A1
+    T2 --> TS2 --> A2
+    T3 -->|wildcard fallback| TS3 --> A3
+    T4 --> TS4 --> A4
+```
+
 ### Cross-Protocol Routing Example
 
 ```mermaid
 flowchart TD
     subgraph "ANC High-Risk v2.1"
-        T1["target: supervisor"]
-        T2["target: patient-reminder"]
+        P1T1["channel: supervisor"]
+        P1T2["channel: patient-reminder"]
     end
 
     subgraph "HIV Treatment v1.0"
-        T3["target: supervisor"]
-        T4["target: lab-coordinator"]
+        P2T1["channel: supervisor"]
+        P2T2["channel: lab-coordinator"]
     end
 
-    subgraph Target Subscriptions
+    subgraph Channel Subscriptions
         TS1["ANC + supervisor → SMS Gateway"]
         TS2["ANC + supervisor → Dashboard"]
         TS3["ANC + patient-reminder → WhatsApp Bot"]
@@ -164,11 +190,11 @@ flowchart TD
         A5["Lab System Adaptor"]
     end
 
-    T1 --> TS1 --> A1
-    T1 --> TS2 --> A2
-    T2 --> TS3 --> A3
-    T3 --> TS4 --> A4
-    T4 --> TS5 --> A5
+    P1T1 --> TS1 --> A1
+    P1T1 --> TS2 --> A2
+    P1T2 --> TS3 --> A3
+    P2T1 --> TS4 --> A4
+    P2T2 --> TS5 --> A5
 ```
 
 ---
@@ -208,8 +234,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    TE["TriggerEvent fields"] --> FB[FhirPayloadBuilder]
-    AD["ActionDefinition metadata<br/>action_type, severity, target"] --> FB
+    TE["TriggerEvent fields<br/>actionType, severity, intelligenceChannel,<br/>subject, facilityId, etc."] --> FB[FhirPayloadBuilder]
     DRI["DeliveryRun ID"] --> FB
     AT{"ActionType?"} --> FB
     FB -->|NOTIFICATION / ESCALATION| CR["FHIR CommunicationRequest"]
@@ -318,16 +343,16 @@ flowchart TD
 
 ## 7. REST API Flows
 
-### 7.1 Create Target Subscription
+### 7.1 Create Channel Subscription
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Controller as TargetSubscriptionController
-    participant Service as TargetSubscriptionService
+    participant Controller as ChannelSubscriptionController
+    participant Service as ChannelSubscriptionService
     participant DB as PostgreSQL
 
-    Client->>Controller: POST /v1/target-subscriptions
+    Client->>Controller: POST /v1/channel-subscriptions
     Controller->>Controller: Validate request body
     alt Validation failed
         Controller-->>Client: 400 Bad Request
@@ -346,15 +371,15 @@ sequenceDiagram
         Controller-->>Client: 404 Not Found
     end
 
-    Service->>DB: existsByProtocolTargetAdaptor(...)
-    alt Already exists
+    Service->>DB: existsByProtocolChannelActionIdAdaptor(...)
+    alt Already exists (same protocol + action_id + channel + adaptor)
         Service-->>Controller: ConflictException
         Controller-->>Client: 409 Conflict
     end
 
-    Service->>DB: save(TargetSubscription)
+    Service->>DB: save(ChannelSubscription)
     DB-->>Service: saved entity
-    Service-->>Controller: TargetSubscriptionDto
+    Service-->>Controller: ChannelSubscriptionDto
     Controller-->>Client: 201 Created
 ```
 
@@ -408,7 +433,7 @@ sequenceDiagram
     Service->>DB: existsActiveSubscriptions(adaptorId)
     alt Active subscriptions exist
         Service-->>Controller: UnprocessableEntityException
-        Controller-->>Client: 422 — Active target subscriptions reference this adaptor
+        Controller-->>Client: 422 — Active channel subscriptions reference this adaptor
     end
 
     Service->>DB: existsActiveDeliveryRuns(adaptorId)

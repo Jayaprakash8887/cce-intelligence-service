@@ -9,7 +9,7 @@
 ## Table of Contents
 
 1. [Delivery Runs](#1-delivery-runs)
-2. [Target Subscriptions](#2-target-subscriptions)
+2. [Channel Subscriptions](#2-channel-subscriptions)
 3. [Receiver Adaptors](#3-receiver-adaptors)
 4. [Actuator Endpoints](#4-actuator-endpoints)
 5. [Error Response Format](#5-error-response-format)
@@ -36,7 +36,9 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
 | `subject` | `String` | No | Filter by patient UPID |
 | `actionRunId` | `UUID` | No | Filter by action run |
 | `actionDefinitionId` | `UUID` | No | Filter by action definition |
+| `actionType` | `String` | No | Filter by action type: `NOTIFICATION`, `ESCALATION`, `COORDINATION` |
 | `severity` | `String` | No | Filter by severity: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
+| `channel` | `String` | No | Filter by channel name (e.g., `supervisor`) |
 | `protocolDefinitionId` | `UUID` | No | Filter by protocol definition |
 | `page` | `int` | No | Page number (0-based, default: `0`) |
 | `size` | `int` | No | Page size (default: `20`) |
@@ -51,7 +53,10 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
       "actionRunId": "990e8400-e29b-41d4-a716-446655440010",
       "actionDefinitionId": "a1b2c3d4-0001-4000-a000-000000000001",
       "actionDefinitionName": "ANC Overdue Alert",
-      "targetSubscriptionId": "d4e5f6a7-0001-4000-d000-000000000010",
+      "actionType": "NOTIFICATION",
+      "actionId": "anc-visit-2",
+      "channel": "supervisor",
+      "channelSubscriptionId": "d4e5f6a7-0001-4000-d000-000000000010",
       "receiverAdaptorId": "c3d4e5f6-0001-4000-c000-000000000001",
       "receiverAdaptorName": "Kigali South SMS Gateway",
       "status": "DELIVERED",
@@ -93,7 +98,10 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
     "actionRunId": "990e8400-e29b-41d4-a716-446655440010",
     "actionDefinitionId": "a1b2c3d4-0001-4000-a000-000000000001",
     "actionDefinitionName": "ANC Overdue Alert",
-    "targetSubscriptionId": "d4e5f6a7-0001-4000-d000-000000000010",
+    "actionType": "NOTIFICATION",
+    "actionId": "anc-visit-2",
+    "channel": "supervisor",
+    "channelSubscriptionId": "d4e5f6a7-0001-4000-d000-000000000010",
     "receiverAdaptorId": "c3d4e5f6-0001-4000-c000-000000000001",
     "receiverAdaptorName": "Kigali South SMS Gateway",
     "status": "DELIVERED",
@@ -101,11 +109,13 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
     "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
     "facilityId": "0002",
     "severity": "HIGH",
-    "renderedPayload": {
-      "type": "NOTIFICATION",
-      "severity": "HIGH",
-      "subject": "260225-0002-5501",
-      "message": "Patient 260225-0002-5501 step anc-visit-2 is 5 days overdue at facility 0002"
+    "fhirPayload": {
+      "resourceType": "CommunicationRequest",
+      "status": "active",
+      "priority": "urgent",
+      "category": [{ "coding": [{ "system": "http://cce.openphc.org/fhir/action-type", "code": "NOTIFICATION" }] }],
+      "subject": { "identifier": { "system": "urn:cce:upid", "value": "260225-0002-5501" } },
+      "payload": [{ "contentString": "Patient 260225-0002-5501 step anc-visit-2 is 5 days overdue at facility 0002" }]
     },
     "deliveryResult": {
       "httpStatus": 200,
@@ -206,27 +216,30 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
 
 ---
 
-## 2. Target Subscriptions
+## 2. Channel Subscriptions
 
-Target Subscriptions define the **many-to-many routing** between protocol definition targets and Receiver Adaptors. Each subscription maps a `(protocolDefinitionId, target)` pair to a specific Receiver Adaptor.
+Channel Subscriptions define the **many-to-many routing** between protocol definition channels and Receiver Adaptors. Each subscription maps a `(protocolDefinitionId, actionId, channel)` tuple to a specific Receiver Adaptor. The `actionId` is optional — when omitted (`null`), the subscription acts as a wildcard for all steps in the protocol. Step-specific subscriptions take precedence over wildcards during routing.
 
-**Required scope**: `target-subscriptions:read` (GET), `target-subscriptions:write` (POST, PUT, DELETE)
+**Required scope**: `channel-subscriptions:read` (GET), `channel-subscriptions:write` (POST, PUT, DELETE)
 
 ---
 
-### 2.1 Create Target Subscription
+### 2.1 Create Channel Subscription
 
-**`POST /v1/target-subscriptions`** — Create a new target subscription.
+**`POST /v1/channel-subscriptions`** — Create a new channel subscription.
 
 **Request Body**
 
 ```json
 {
   "protocolDefinitionId": "550e8400-e29b-41d4-a716-446655440000",
-  "target": "supervisor",
+  "actionId": "anc-visit-2",
+  "channel": "supervisor",
   "receiverAdaptorId": "c3d4e5f6-0001-4000-c000-000000000001"
 }
 ```
+
+> **Note:** `actionId` is optional. Omit to create a wildcard subscription that matches all steps in the protocol for the given channel.
 
 **Response:** `201 Created`
 
@@ -236,7 +249,8 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
     "id": "d4e5f6a7-0001-4000-d000-000000000010",
     "protocolDefinitionId": "550e8400-e29b-41d4-a716-446655440000",
     "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
-    "target": "supervisor",
+    "actionId": "anc-visit-2",
+    "channel": "supervisor",
     "receiverAdaptorId": "c3d4e5f6-0001-4000-c000-000000000001",
     "receiverAdaptorName": "Kigali South SMS Gateway",
     "status": "ACTIVE",
@@ -250,20 +264,21 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
 |:-------------|:----------|
 | `400` | Missing required fields or invalid UUIDs |
 | `404` | `protocolDefinitionId` or `receiverAdaptorId` does not exist |
-| `409` | Subscription for `(protocolDefinitionId, target, receiverAdaptorId)` already exists |
+| `409` | Subscription for `(protocolDefinitionId, actionId, channel, receiverAdaptorId)` already exists |
 
 ---
 
-### 2.2 List Target Subscriptions
+### 2.2 List Channel Subscriptions
 
-**`GET /v1/target-subscriptions`** — Retrieve all target subscriptions with optional filters.
+**`GET /v1/channel-subscriptions`** — Retrieve all channel subscriptions with optional filters.
 
 **Query Parameters**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `protocolDefinitionId` | `UUID` | No | Filter by protocol definition |
-| `target` | `String` | No | Filter by target name |
+| `actionId` | `String` | No | Filter by action ID (step-level); use `__null__` for wildcard-only subscriptions |
+| `channel` | `String` | No | Filter by channel name |
 | `receiverAdaptorId` | `UUID` | No | Filter by receiver adaptor |
 | `status` | `String` | No | Filter by status: `ACTIVE`, `INACTIVE` |
 
@@ -276,7 +291,8 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
       "id": "d4e5f6a7-0001-4000-d000-000000000010",
       "protocolDefinitionId": "550e8400-e29b-41d4-a716-446655440000",
       "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
-      "target": "supervisor",
+      "actionId": "anc-visit-2",
+      "channel": "supervisor",
       "receiverAdaptorId": "c3d4e5f6-0001-4000-c000-000000000001",
       "receiverAdaptorName": "Kigali South SMS Gateway",
       "status": "ACTIVE",
@@ -287,7 +303,8 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
       "id": "d4e5f6a7-0002-4000-d000-000000000011",
       "protocolDefinitionId": "550e8400-e29b-41d4-a716-446655440000",
       "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
-      "target": "supervisor",
+      "actionId": null,
+      "channel": "supervisor",
       "receiverAdaptorId": "c3d4e5f6-0002-4000-c000-000000000002",
       "receiverAdaptorName": "CCE Dashboard Adaptor",
       "status": "ACTIVE",
@@ -300,15 +317,15 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
 
 ---
 
-### 2.3 Get Target Subscription by ID
+### 2.3 Get Channel Subscription by ID
 
-**`GET /v1/target-subscriptions/{id}`**
+**`GET /v1/channel-subscriptions/{id}`**
 
 | Path Parameter | Type | Description |
 |:---------------|:-----|:------------|
-| `id` | `UUID` | Target subscription ID |
+| `id` | `UUID` | Channel subscription ID |
 
-**Response:** `200 OK` — `TargetSubscriptionDto`
+**Response:** `200 OK` — `ChannelSubscriptionDto`
 
 | Error Status | Condition |
 |:-------------|:----------|
@@ -316,13 +333,13 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
 
 ---
 
-### 2.4 Update Target Subscription
+### 2.4 Update Channel Subscription
 
-**`PUT /v1/target-subscriptions/{id}`** — Update status of an existing subscription.
+**`PUT /v1/channel-subscriptions/{id}`** — Update status of an existing subscription.
 
 | Path Parameter | Type | Description |
 |:---------------|:-----|:------------|
-| `id` | `UUID` | Target subscription ID |
+| `id` | `UUID` | Channel subscription ID |
 
 **Request Body**
 
@@ -332,7 +349,7 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
 }
 ```
 
-> **Note:** `protocolDefinitionId`, `target`, and `receiverAdaptorId` are immutable. To change routing, delete the subscription and create a new one.
+> **Note:** `protocolDefinitionId`, `actionId`, `channel`, and `receiverAdaptorId` are immutable. To change routing, delete the subscription and create a new one.
 
 **Response:** `200 OK`
 
@@ -342,7 +359,8 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
     "id": "d4e5f6a7-0001-4000-d000-000000000010",
     "protocolDefinitionId": "550e8400-e29b-41d4-a716-446655440000",
     "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
-    "target": "supervisor",
+    "actionId": "anc-visit-2",
+    "channel": "supervisor",
     "receiverAdaptorId": "c3d4e5f6-0001-4000-c000-000000000001",
     "receiverAdaptorName": "Kigali South SMS Gateway",
     "status": "INACTIVE",
@@ -359,17 +377,17 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
 
 ---
 
-### 2.5 Delete Target Subscription
+### 2.5 Delete Channel Subscription
 
-**`DELETE /v1/target-subscriptions/{id}`** — Remove a target subscription.
+**`DELETE /v1/channel-subscriptions/{id}`** — Remove a channel subscription.
 
 | Path Parameter | Type | Description |
 |:---------------|:-----|:------------|
-| `id` | `UUID` | Target subscription ID |
+| `id` | `UUID` | Channel subscription ID |
 
 **Pre-conditions:**
 - Only subscriptions with no `PENDING` or `EXECUTING` delivery runs can be deleted.
-- Subscriptions with historical delivery runs (`DELIVERED`, `FAILED`, `CANCELLED`) can be deleted; the `delivery_run.target_subscription_id` FK is preserved (soft reference).
+- Subscriptions with historical delivery runs (`DELIVERED`, `FAILED`, `CANCELLED`) can be deleted; the `delivery_run.channel_subscription_id` FK is preserved (soft reference).
 
 **Response:** `204 No Content`
 
@@ -382,7 +400,7 @@ Target Subscriptions define the **many-to-many routing** between protocol defini
 
 ## 3. Receiver Adaptors
 
-Receiver Adaptors represent external **webhook endpoints** that receive intelligence actions. Routing from targets to adaptors is managed via Target Subscriptions.
+Receiver Adaptors represent external **webhook endpoints** that receive intelligence actions. Routing from channels to adaptors is managed via Channel Subscriptions.
 
 **Required scope**: `admin` (all operations)
 
@@ -524,15 +542,15 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
 | `id` | `UUID` | Receiver adaptor ID |
 
 **Pre-conditions:**
-- Only adaptors with no `PENDING` or `EXECUTING` delivery runs (via target subscriptions) can be deleted.
-- All target subscriptions referencing this adaptor must be deleted or inactive first.
+- Only adaptors with no `PENDING` or `EXECUTING` delivery runs (via channel subscriptions) can be deleted.
+- All channel subscriptions referencing this adaptor must be deleted or inactive first.
 
 **Response:** `204 No Content`
 
 | Error Status | Condition |
 |:-------------|:----------|
 | `404` | Receiver adaptor not found |
-| `422` | Adaptor has active delivery runs or active target subscriptions |
+| `422` | Adaptor has active delivery runs or active channel subscriptions |
 
 ---
 

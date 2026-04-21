@@ -166,7 +166,7 @@ cce-intelligence-service/
 │       │   ├── IntelligenceServiceApplication.java
 │       │   ├── config/          # Spring configuration (Kafka, WebClient, Async)
 │       │   ├── domain/          # Entities, enums, repositories
-│       │   │   ├── entity/      # DeliveryRun, ReceiverAdaptor, TargetSubscription, DeliveryAuditLog
+│       │   │   ├── entity/      # DeliveryRun, ReceiverAdaptor, ChannelSubscription, DeliveryAuditLog
 │       │   │   ├── enums/       # DeliveryRunStatus, ActionType, DeliveryMode, IntelligenceSeverity
 │       │   ├── readonly/    # ProtocolDefinition, ProtocolInstance, StepInstance, ActionRun,
 │       │   │   │                #   ActionDefinition, Deviation, ActionRunContext (immutable, Compliance-owned)
@@ -176,17 +176,17 @@ cce-intelligence-service/
 │       │   │   ├── IntelligenceActionEvaluator.java        # JSONLogic condition evaluation
 │       │   │   ├── ActionResolver.java       # Resolve definitionCanonical → ActionDefinition (read-only)
 │       │   │   ├── TemplateRenderer.java     # Render message templates with context
-│       │   │   ├── SubscriptionRouter.java   # Resolve target → Receiver Adaptors via target_subscription
+│       │   │   ├── SubscriptionRouter.java   # Resolve channel → Receiver Adaptors via channel_subscription
 │       │   │   └── ActionDispatcher.java     # Fan-out deliver to subscribed Receiver Adaptors
 │       │   ├── kafka/           # Kafka consumer
 │       │   │   ├── config/      # Consumer factory, topic bindings
 │       │   │   ├── consumer/    # IntelligenceTriggerConsumer
 │       │   │   └── model/       # IntelligenceTriggerEvent
-│       │   ├── service/         # Business logic (DeliveryRunService, TargetSubscriptionService,
+│       │   ├── service/         # Business logic (DeliveryRunService, ChannelSubscriptionService,
 │       │   │                    #   ReceiverAdaptorService, DeliveryAuditService)
 │       │   ├── webhook/         # WebClient-based webhook delivery
 │       │   └── web/             # REST controllers, DTOs, exception handler
-│       │       ├── controller/  # DeliveryRunController, TargetSubscriptionController,
+│       │       ├── controller/  # DeliveryRunController, ChannelSubscriptionController,
 │       │       │                #   ReceiverAdaptorController
 │       │       ├── dto/         # Request/response DTOs
 │       │       └── exception/   # GlobalExceptionHandler
@@ -208,7 +208,7 @@ All CCE services share the same database (`cce_collector`) on the PostgreSQL ins
 
 | Category | Tables |
 |---|---|
-| **Owned (4)** | `receiver_adaptor`, `target_subscription`, `delivery_run`, `delivery_audit_log` |
+| **Owned (4)** | `receiver_adaptor`, `channel_subscription`, `delivery_run`, `delivery_audit_log` |
 | **Read-only (5)** | `protocol_definition`, `protocol_instance`, `step_instance`, `action_definition`, `action_run` |
 
 ### 5.2 No Separate Database Creation Needed
@@ -237,7 +237,7 @@ Migrations are applied automatically on application startup. To run manually:
 
 | Version | Description | Script |
 |---|---|---|
-| V1 | Intelligence service schema (`receiver_adaptor`, `target_subscription`, `delivery_run`, `delivery_audit_log`) | `V1__intelligence_schema.sql` |
+| V1 | Intelligence service schema (`receiver_adaptor`, `channel_subscription`, `delivery_run`, `delivery_audit_log`) | `V1__intelligence_schema.sql` |
 
 ## 6. Docker Build
 
