@@ -71,7 +71,7 @@ sequenceDiagram
     participant IS as Intelligence Service
     participant RA as Receiver Adaptors
 
-    CS->>CS: Deviation detected or step completed
+    CS->>CS: Step state change detected (due, overdue, missed, or completed)
     CS->>CS: Evaluate intelligence action conditions
     CS->>CS: Resolve actionType, severity, intelligenceChannel, protocolDefinitionId
     CS->>CS: Create ActionRun (TRIGGERED → PUBLISHED)

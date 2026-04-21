@@ -244,7 +244,7 @@ flowchart LR
 
     subgraph "HTTP POST to Receiver Adaptor"
         H
-        Headers["Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id<br/>X-CCE-Action-Run-Id<br/>+ adaptor.config auth"]
+        Headers[\"Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id<br/>X-CCE-Action-Run-Id<br/>X-CCE-Signature-256 (if webhookSecret configured)<br/>+ adaptor.config authHeader + customHeaders\"]
     end
 ```
 

@@ -109,9 +109,9 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
       "resourceType": "CommunicationRequest",
       "status": "active",
       "priority": "urgent",
-      "category": [{ "coding": [{ "system": "http://cce.openphc.org/fhir/action-type", "code": "NOTIFICATION" }] }],
-      "subject": { "identifier": { "system": "urn:cce:upid", "value": "260225-0002-5501" } },
-      "payload": [{ "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)" }]
+      "category": [{ "coding": [{ "system": "http://openphc.org/fhir/CodeSystem/cce-action-type", "code": "NOTIFICATION" }] }],
+      "subject": { "identifier": { "system": "http://openphc.org/fhir/patient-upid", "value": "260225-0002-5501" } },
+      "payload": [{ "contentString": "[HIGH] NOTIFICATION for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)" }]
     },
     "deliveryResult": {
       "httpStatus": 200,

@@ -219,7 +219,7 @@ Tracks the **delivery lifecycle** of an intelligence action to a specific Receiv
 |------|------|---------|
 | Primary Key | `delivery_run_pkey` | `id` |
 | Foreign Key | `delivery_run_channel_subscription_id_fkey` | `channel_subscription_id` → `channel_subscription(id)` |
-| Unique | `delivery_run_action_run_subscription_key` | `(action_run_id, channel_subscription_id)` — Idempotency guard. One delivery per action_run per adaptor. |
+| Unique | `delivery_run_action_run_subscription_key` | `(action_run_id, channel_subscription_id)` — Idempotency guard. One delivery per action_run per subscription. **Note:** PostgreSQL treats NULLs as distinct in unique constraints, so multiple rows with `channel_subscription_id = NULL` for the same `action_run_id` will not conflict. This is the correct behavior — failed delivery runs without a matching subscription are edge cases and don't need deduplication. |
 | Check | — | `action_type IN ('NOTIFICATION', 'ESCALATION', 'COORDINATION')` |
 | Check | — | `status IN ('PENDING', 'EXECUTING', 'DELIVERED', 'FAILED', 'CANCELLED')` |
 | Check | — | `severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')` |
@@ -266,7 +266,7 @@ The `action_run_id` and `action_definition_id` columns on `delivery_run` are sto
 
 | Table | Owner | Previously Used For | Now Provided By |
 |-------|-------|--------------------|----|
-| `action_run` | Compliance Service | `action_definition_id`, `protocol_instance_id` resolution | Trigger event fields: `actionDefinitionId`, `protocolDefinitionId` |
+| `action_run` | Compliance Service | `action_definition_id`, `protocol_instance` FK resolution | Trigger event fields: `actionDefinitionId`, `protocolDefinitionId` |
 | `action_definition` | Compliance Service | `action_type`, `severity`, `intelligence_channel` lookup | Trigger event fields: `actionType`, `severity`, `intelligenceChannel` |
 | `protocol_instance` | Compliance Service | `protocol_definition_id` for routing | Trigger event field: `protocolDefinitionId` |
 | `protocol_definition` | Compliance Service | Routing key for `channel_subscription` | Trigger event field: `protocolDefinitionId` |
@@ -386,6 +386,22 @@ A **FHIR R4 Endpoint** resource describing the adaptor's identity, connection ty
   }
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `authHeader` | String | No | HTTP header name for authentication (e.g., `X-API-Key`, `Authorization`). |
+| `authValue` | String | No | Authentication credential value. **Encrypted at rest; masked in API responses.** |
+| `webhookSecret` | String | No | Shared secret for HMAC-SHA256 request signing. When present, `WebhookDeliveryClient` computes signature and sends as `X-CCE-Signature-256` header. |
+| `timeoutMs` | Integer | No | Per-adaptor read timeout override (ms). Falls back to `cce.intelligence.webhook.read-timeout-ms`. |
+| `retryOverride.maxAttempts` | Integer | No | Per-adaptor retry attempts override. Falls back to `cce.intelligence.webhook.retry-attempts`. |
+| `retryOverride.intervalMs` | Integer | No | Per-adaptor retry interval override (ms). Falls back to `cce.intelligence.webhook.retry-interval-ms`. |
+| `customHeaders` | Map | No | Additional HTTP headers injected into every webhook request to this adaptor. |
+
+> **Platform headers (always sent):** In addition to `config.customHeaders` and `config.authHeader`, the `WebhookDeliveryClient` always injects these platform headers on every webhook POST:
+> - `Content-Type: application/fhir+json`
+> - `X-CCE-Delivery-Run-Id: {deliveryRunId}` — Unique delivery run identifier for correlation.
+> - `X-CCE-Action-Run-Id: {actionRunId}` — Compliance Service action run ID for cross-service tracing.
+> - `X-CCE-Signature-256: {hmac}` — HMAC-SHA256 signature (only if `webhookSecret` is configured).
 
 ### `delivery_run` → `fhir_payload`
 
