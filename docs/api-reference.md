@@ -62,7 +62,6 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
       "status": "DELIVERED",
       "subject": "260225-0002-5501",
       "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
-      "facilityId": "0002",
       "severity": "HIGH",
       "attemptCount": 1,
       "createdAt": "2026-03-25T10:05:00Z",
@@ -107,7 +106,6 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
     "status": "DELIVERED",
     "subject": "260225-0002-5501",
     "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
-    "facilityId": "0002",
     "severity": "HIGH",
     "fhirPayload": {
       "resourceType": "CommunicationRequest",
@@ -115,7 +113,7 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
       "priority": "urgent",
       "category": [{ "coding": [{ "system": "http://cce.openphc.org/fhir/action-type", "code": "NOTIFICATION" }] }],
       "subject": { "identifier": { "system": "urn:cce:upid", "value": "260225-0002-5501" } },
-      "payload": [{ "contentString": "Patient 260225-0002-5501 step anc-visit-2 is 5 days overdue at facility 0002" }]
+      "payload": [{ "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 (PlanDefinition/anc-high-risk|2.1)" }]
     },
     "deliveryResult": {
       "httpStatus": 200,

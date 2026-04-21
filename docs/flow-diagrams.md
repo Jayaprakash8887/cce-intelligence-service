@@ -234,7 +234,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    TE["TriggerEvent fields<br/>actionType, severity, intelligenceChannel,<br/>subject, facilityId, etc."] --> FB[FhirPayloadBuilder]
+    TE["TriggerEvent fields<br/>actionType, severity, intelligenceChannel,<br/>subject, etc."] --> FB[FhirPayloadBuilder]
     DRI["DeliveryRun ID"] --> FB
     AT{"ActionType?"} --> FB
     FB -->|NOTIFICATION / ESCALATION| CR["FHIR CommunicationRequest"]

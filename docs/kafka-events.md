@@ -127,7 +127,7 @@ cce.kafka:
 
 ## 4. Inbound Message Schema — IntelligenceTriggerEvent
 
-Published by the Compliance Service (v1.1.0+) when an intelligence action's condition matches — triggered by a step's state change. The event is **self-contained** — the Compliance Service resolves all routing and payload metadata at publish time (action type, severity, intelligence channel, facility, protocol definition), so the Intelligence Service requires **zero Compliance table reads** on the hot path.
+Published by the Compliance Service (v1.1.0+) when an intelligence action's condition matches — triggered by a step's state change. The event is **self-contained** — the Compliance Service resolves all routing and payload metadata at publish time (action type, severity, intelligence channel, protocol definition), so the Intelligence Service requires **zero Compliance table reads** on the hot path.
 
 ```json
 {
@@ -139,7 +139,6 @@ Published by the Compliance Service (v1.1.0+) when an intelligence action's cond
   "actionType": "ESCALATION",
   "severity": "HIGH",
   "intelligenceChannel": "supervisor",
-  "facilityId": "0002",
   "deviationType": "overdue",
   "stepState": "overdue",
   "actionId": "anc-visit-2",
@@ -160,14 +159,12 @@ Published by the Compliance Service (v1.1.0+) when an intelligence action's cond
 | `actionType` | String | Yes | `NOTIFICATION`, `ESCALATION`, or `COORDINATION`. Determines FHIR resource type (CommunicationRequest vs Task). Resolved from `action_definition.action_type`. |
 | `severity` | String | Yes | Effective severity: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`. Resolved by Compliance from PlanDefinition extension `intelligence-severity`, falling back to `action_definition.severity`. |
 | `intelligenceChannel` | String | Yes | Effective routing channel (e.g., `supervisor`, `patient-reminder`). Resolved by Compliance from PlanDefinition extension `intelligence-channel`, falling back to `action_definition.intelligence_channel`. Used with `protocolDefinitionId` + `actionId` for `channel_subscription` routing. |
-| `facilityId` | String | No | Facility code (e.g., `0002`). Resolved by Compliance from context (explicit facility context, not parsed from UPID). |
-| `deviationType` | String | No | `overdue`, `missed`, or `null` for late-completion triggers |
-| `stepState` | String | Yes | Current step state (lowercase): `overdue`, `missed`, `completed` |
+| `stepState` | String | Yes | Current step state (lowercase): `overdue`, `missed`, `completed`. Used for trigger type derivation and FHIR extension. |
 | `actionId` | String | Yes | PlanDefinition action ID (e.g., `anc-visit-2`). Used for step-level routing in `channel_subscription`. |
 | `protocolCanonical` | String | Yes | Protocol `url\|version` |
 | `detectedAt` | OffsetDateTime | Yes | When the event was detected |
 
-> **Design rationale (fat event):** By including `actionDefinitionId`, `protocolDefinitionId`, `actionType`, `severity`, `intelligenceChannel`, and `facilityId` in the event, the Intelligence Service eliminates all Compliance table reads (`action_run`, `action_definition`, `protocol_instance`, `protocol_definition`, `step_instance`) from the processing hot path. This is safe because ActivityDefinitions and PlanDefinitions are immutable once published — the values at trigger time are the correct values for the lifetime of the `action_run`.
+> **Design rationale (fat event):** By including `actionDefinitionId`, `protocolDefinitionId`, `actionType`, `severity`, and `intelligenceChannel` in the event, the Intelligence Service eliminates all Compliance table reads (`action_run`, `action_definition`, `protocol_instance`, `protocol_definition`, `step_instance`) from the processing hot path. This is safe because ActivityDefinitions and PlanDefinitions are immutable once published — the values at trigger time are the correct values for the lifetime of the `action_run`.
 
 ### Message Key
 
@@ -177,15 +174,15 @@ Published by the Compliance Service (v1.1.0+) when an intelligence action's cond
 
 | Derived Type | Condition | Trigger Scenario |
 |---|---|---|
-| `deviation.overdue` | `deviationType == "overdue"` | Step transitioned DUE → OVERDUE |
-| `deviation.missed` | `deviationType == "missed"` | Step transitioned OVERDUE → MISSED |
-| `step.completed.late` | `deviationType == null && stepState == "completed"` | Step completed after being overdue (late completion) |
+| `deviation.overdue` | `stepState == "overdue"` | Step transitioned DUE → OVERDUE |
+| `deviation.missed` | `stepState == "missed"` | Step transitioned OVERDUE → MISSED |
+| `step.completed.late` | `stepState == "completed"` | Step completed after being overdue (late completion) |
 
 ```java
 String triggerType;
-if ("overdue".equals(event.getDeviationType())) {
+if ("overdue".equals(event.getStepState())) {
     triggerType = "deviation.overdue";
-} else if ("missed".equals(event.getDeviationType())) {
+} else if ("missed".equals(event.getStepState())) {
     triggerType = "deviation.missed";
 } else if ("completed".equals(event.getStepState())) {
     triggerType = "step.completed.late";
@@ -212,8 +209,6 @@ Use this derived type for the `cce.intelligence.triggers.received` counter tag.
   "actionType": "NOTIFICATION",
   "severity": "MEDIUM",
   "intelligenceChannel": "supervisor",
-  "facilityId": "0002",
-  "deviationType": "overdue",
   "stepState": "overdue",
   "actionId": "viral-load-check",
   "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/hiv-treatment|1.0",
@@ -233,8 +228,6 @@ Use this derived type for the `cce.intelligence.triggers.received` counter tag.
   "actionType": "ESCALATION",
   "severity": "HIGH",
   "intelligenceChannel": "supervisor",
-  "facilityId": "0001",
-  "deviationType": "missed",
   "stepState": "missed",
   "actionId": "anc-visit-3",
   "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
@@ -254,8 +247,6 @@ Use this derived type for the `cce.intelligence.triggers.received` counter tag.
   "actionType": "NOTIFICATION",
   "severity": "LOW",
   "intelligenceChannel": "patient-reminder",
-  "facilityId": "0002",
-  "deviationType": null,
   "stepState": "completed",
   "actionId": "anc-visit-2",
   "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
@@ -263,7 +254,7 @@ Use this derived type for the `cce.intelligence.triggers.received` counter tag.
 }
 ```
 
-> **Note:** Late completion triggers have `deviationType: null` (not `"overdue"`). The trigger type `step.completed.late` is derived from `deviationType == null && stepState == "completed"`. See [Trigger Type Derivation](#trigger-type-derivation).
+> **Note:** Late completion triggers have `stepState: "completed"`. The trigger type `step.completed.late` is derived from `stepState == "completed"`. See [Trigger Type Derivation](#trigger-type-derivation).
 
 ---
 

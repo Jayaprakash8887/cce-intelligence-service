@@ -62,7 +62,7 @@ graph TB
 
 ## 1.1 Compliance Service Contract
 
-The **CCE Compliance Service** (v1.1.0+) is the upstream publisher. When a step's status changes, the Compliance Service's `IntelligenceActionEvaluator` evaluates PlanDefinition intelligence actions, resolves all metadata (action type, severity, intelligence channel, facility, protocol definition), creates `ActionRun` records (TRIGGERED → PUBLISHED), and publishes a **self-contained** `IntelligenceTriggerEvent` to `cce.intelligence.triggers`.
+The **CCE Compliance Service** (v1.1.0+) is the upstream publisher. When a step's status changes, the Compliance Service's `IntelligenceActionEvaluator` evaluates PlanDefinition intelligence actions, resolves all metadata (action type, severity, intelligence channel, protocol definition), creates `ActionRun` records (TRIGGERED → PUBLISHED), and publishes a **self-contained** `IntelligenceTriggerEvent` to `cce.intelligence.triggers`.
 
 ```mermaid
 sequenceDiagram
@@ -73,7 +73,7 @@ sequenceDiagram
 
     CS->>CS: Deviation detected or step completed
     CS->>CS: Evaluate intelligence action conditions
-    CS->>CS: Resolve actionType, severity, intelligenceChannel, facilityId, protocolDefinitionId
+    CS->>CS: Resolve actionType, severity, intelligenceChannel, protocolDefinitionId
     CS->>CS: Create ActionRun (TRIGGERED → PUBLISHED)
     CS->>Kafka: Publish IntelligenceTriggerEvent (fat event)
     Note over CS,Kafka: Event carries all metadata — no<br/>Compliance table reads needed by IS
@@ -261,8 +261,6 @@ IntelligenceTriggerEvent
   ├── actionId ─────────────► channel_subscription routing key (step-level) + FHIR about[1].display
   ├── subject ──────────────► FHIR subject.identifier
   ├── protocolCanonical ────► FHIR about[0].reference
-  ├── facilityId ───────────► FHIR extension (cce-facility-id)
-  ├── deviationType ────────► FHIR extension (cce-deviation-type)
   ├── stepState ────────────► FHIR extension (cce-step-state)
   ├── detectedAt ───────────► FHIR authoredOn
   ├── actionRunId ──────────► delivery_run.action_run_id (traceability)
@@ -319,14 +317,6 @@ The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from
     {
       "url": "http://openphc.org/fhir/StructureDefinition/cce-action-run-id",
       "valueId": "action-run-uuid"
-    },
-    {
-      "url": "http://openphc.org/fhir/StructureDefinition/cce-deviation-type",
-      "valueCode": "overdue"
-    },
-    {
-      "url": "http://openphc.org/fhir/StructureDefinition/cce-facility-id",
-      "valueString": "0002"
     },
     {
       "url": "http://openphc.org/fhir/StructureDefinition/cce-step-state",
@@ -390,7 +380,7 @@ The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from
 | `payload.contentString` / `description` | Auto-generated summary | Auto-generated summary | `FhirPayloadBuilder` |
 | `recipient` | Channel name | — | `trigger.intelligenceChannel` |
 | `authoredOn` | Detection time | Detection time | `trigger.detectedAt` |
-| `extension.*` | Deviation type, facility, step state | Same | Trigger event fields |
+| `extension.*` | Step state | Same | Trigger event fields |
 
 #### Severity → FHIR Priority Mapping
 
@@ -411,7 +401,7 @@ The Intelligence Service uses a **channel subscription** model that maps `(proto
 
 - **Step-level routing:** A single protocol can route the same `supervisor` channel to different adaptors depending on which step triggered the action (e.g., ANC visit alerts → CHW team lead; lab alerts → lab coordinator).
 - **Multiple adaptors per channel:** A single channel (e.g., `supervisor`) in protocol A can deliver to both an SMS gateway and an in-app notification system.
-- **One adaptor across protocols:** A facility adaptor can subscribe to channels across multiple protocols.
+- **One adaptor across protocols:** An adaptor can subscribe to channels across multiple protocols.
 - **Protocol-scoped channel names:** Channel names like `supervisor`, `patient-reminder`, or `chw-alert` are meaningful within a protocol definition — different protocols can reuse the same channel name with different adaptor subscriptions.
 
 ```mermaid
@@ -530,7 +520,7 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `cce.intelligence.triggers.received` | Counter | `deviation_type` | Triggers received from Kafka |
+| `cce.intelligence.triggers.received` | Counter | `step_state` | Triggers received from Kafka |
 | `cce.intelligence.deliveries.dispatched` | Counter | `action_type`, `severity` | Deliveries dispatched to adaptors |
 | `cce.intelligence.deliveries.delivered` | Counter | `action_type` | Successful deliveries |
 | `cce.intelligence.deliveries.failed` | Counter | `action_type` | Failed deliveries |

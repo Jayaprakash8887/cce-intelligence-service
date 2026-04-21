@@ -63,7 +63,6 @@ erDiagram
         varchar subject
         varchar protocol_canonical
         varchar action_id
-        varchar facility_id
         varchar severity
         varchar channel
         jsonb fhir_payload
@@ -189,7 +188,7 @@ ORDER BY cs.action_id NULLS LAST
 
 ## 5. delivery_run
 
-Tracks the **delivery lifecycle** of an intelligence action to a specific Receiver Adaptor. One row per `(action_run, channel_subscription)` combination. The `(action_run_id, channel_subscription_id)` compound key enforces idempotency — if duplicate trigger events arrive for the same action_run, only the first creates delivery runs. All metadata columns (`action_type`, `severity`, `channel`, `facility_id`, `action_id`, etc.) are populated directly from the trigger event — no Compliance table reads required.
+Tracks the **delivery lifecycle** of an intelligence action to a specific Receiver Adaptor. One row per `(action_run, channel_subscription)` combination. The `(action_run_id, channel_subscription_id)` compound key enforces idempotency — if duplicate trigger events arrive for the same action_run, only the first creates delivery runs. All metadata columns (`action_type`, `severity`, `channel`, `action_id`, etc.) are populated directly from the trigger event — no Compliance table reads required.
 
 ### Columns
 
@@ -204,7 +203,6 @@ Tracks the **delivery lifecycle** of an intelligence action to a specific Receiv
 | `subject` | `VARCHAR` | **NOT NULL** | — | Patient UPID. From trigger event `subject`. |
 | `protocol_canonical` | `VARCHAR` | **NOT NULL** | — | Protocol `url\|version`. From trigger event `protocolCanonical`. |
 | `action_id` | `VARCHAR` | **NOT NULL** | — | PlanDefinition action ID (e.g., `anc-visit-2`). From trigger event `actionId`. |
-| `facility_id` | `VARCHAR` | Yes | — | Facility code. From trigger event `facilityId`. |
 | `severity` | `VARCHAR` | **NOT NULL** | — | Intelligence severity. From trigger event `severity`. See [IntelligenceSeverity](#intelligenceseverity). |
 | `channel` | `VARCHAR` | **NOT NULL** | — | Routing channel name (e.g., `supervisor`). From trigger event `intelligenceChannel`. |
 | `fhir_payload` | `JSONB` | **NOT NULL** | — | The FHIR R4 resource (CommunicationRequest or Task) sent to the adaptor. See [JSONB: fhir_payload](#delivery_run--fhir_payload). |
@@ -259,7 +257,7 @@ Audit trail for delivery lifecycle events. Written asynchronously (`@Async`) to 
 
 ## 7. Compliance Service Tables — Not Accessed at Runtime
 
-With the **fat event design**, the Intelligence Service does not read any Compliance Service tables during trigger processing. All metadata needed for routing and FHIR payload construction (`actionType`, `severity`, `intelligenceChannel`, `protocolDefinitionId`, `actionDefinitionId`, `facilityId`) is carried in the `IntelligenceTriggerEvent` published by the Compliance Service via Kafka.
+With the **fat event design**, the Intelligence Service does not read any Compliance Service tables during trigger processing. All metadata needed for routing and FHIR payload construction (`actionType`, `severity`, `intelligenceChannel`, `protocolDefinitionId`, `actionDefinitionId`) is carried in the `IntelligenceTriggerEvent` published by the Compliance Service via Kafka.
 
 The `action_run_id` and `action_definition_id` columns on `delivery_run` are stored for **traceability and cross-service correlation** only — they enable diagnostic joins in data warehouses or ad-hoc queries but are not used as runtime foreign keys.
 
@@ -336,7 +334,7 @@ Intelligence Service categorization of actions. Carried directly in the trigger 
     "intervalMs": 3000
   },
   "customHeaders": {
-    "X-Facility-Code": "FOSA-KGL-001"
+    "X-Source-System": "cce-intelligence"
   }
 }
 ```
@@ -378,8 +376,6 @@ The FHIR R4-compliant resource sent to the Receiver Adaptor. Resource type depen
   "extension": [
     { "url": "http://openphc.org/fhir/StructureDefinition/cce-severity", "valueCode": "high" },
     { "url": "http://openphc.org/fhir/StructureDefinition/cce-action-run-id", "valueId": "action-run-uuid" },
-    { "url": "http://openphc.org/fhir/StructureDefinition/cce-deviation-type", "valueCode": "overdue" },
-    { "url": "http://openphc.org/fhir/StructureDefinition/cce-facility-id", "valueString": "0002" },
     { "url": "http://openphc.org/fhir/StructureDefinition/cce-step-state", "valueCode": "overdue" }
   ]
 }
@@ -427,7 +423,7 @@ Content varies by event type:
 
 | Metric Name | Type | Tags | Description |
 |-------------|------|------|-------------|
-| `cce.intelligence.triggers.received` | Counter | `deviation_type` | Triggers received from Kafka |
+| `cce.intelligence.triggers.received` | Counter | `step_state` | Triggers received from Kafka |
 | `cce.intelligence.deliveries.dispatched` | Counter | `action_type`, `severity` | Deliveries dispatched to adaptors |
 | `cce.intelligence.deliveries.delivered` | Counter | `action_type` | Successful deliveries |
 | `cce.intelligence.deliveries.failed` | Counter | `action_type` | Failed deliveries |
