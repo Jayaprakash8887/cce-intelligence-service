@@ -167,7 +167,7 @@ cce-intelligence-service/
 │       │   ├── config/          # Spring configuration (Kafka, WebClient, Async)
 │       │   ├── domain/          # Entities, enums, repositories
 │       │   │   ├── entity/      # DeliveryRun, ReceiverAdaptor, ChannelSubscription, DeliveryAuditLog
-│       │   │   ├── enums/       # DeliveryRunStatus, ActionType, DeliveryMode, IntelligenceSeverity
+│       │   │   ├── enums/       # DeliveryRunStatus, ActionType, IntelligenceSeverity
 │       │   ├── readonly/    # ProtocolDefinition, ProtocolInstance, StepInstance, ActionRun,
 │       │   │   │                #   ActionDefinition, Deviation, ActionRunContext (immutable, Compliance-owned)
 │       │   │   └── repository/  # JPA repositories for all entities

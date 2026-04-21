@@ -211,9 +211,9 @@ sequenceDiagram
     participant Audit as DeliveryAuditService
 
     Dispatcher->>DB: update DeliveryRun status=EXECUTING
-    Dispatcher->>Audit: log(DISPATCHED, adaptorName, endpointUrl)
+    Dispatcher->>Audit: log(DISPATCHED, adaptorName, definition.address)
 
-    Dispatcher->>Adaptor: HTTP POST endpoint_url
+    Dispatcher->>Adaptor: HTTP POST definition.address
     Note right of Adaptor: Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id: {runId}<br/>X-CCE-Action-Run-Id: {actionRunId}<br/>+ adaptor auth headers from config
 
     alt HTTP 2xx

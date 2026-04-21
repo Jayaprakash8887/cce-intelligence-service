@@ -413,8 +413,26 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
 ```json
 {
   "name": "Kigali South SMS Gateway",
-  "endpointUrl": "https://sms-gateway.example.com/webhook/intelligence",
-  "deliveryMode": "WEBHOOK",
+  "definition": {
+    "resourceType": "Endpoint",
+    "id": "kigali-south-sms",
+    "status": "active",
+    "connectionType": {
+      "system": "http://terminology.hl7.org/CodeSystem/endpoint-connection-type",
+      "code": "hl7-fhir-rest",
+      "display": "HL7 FHIR REST"
+    },
+    "name": "Kigali South SMS Gateway",
+    "payloadType": [
+      {
+        "coding": [
+          { "system": "http://hl7.org/fhir/resource-types", "code": "CommunicationRequest" }
+        ]
+      }
+    ],
+    "payloadMimeType": ["application/fhir+json"],
+    "address": "https://sms-gateway.example.com/webhook/intelligence"
+  },
   "config": {
     "authHeader": "X-API-Key",
     "authValue": "sk-abc123",
@@ -430,8 +448,26 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
   "data": {
     "id": "c3d4e5f6-0001-4000-c000-000000000001",
     "name": "Kigali South SMS Gateway",
-    "endpointUrl": "https://sms-gateway.example.com/webhook/intelligence",
-    "deliveryMode": "WEBHOOK",
+    "definition": {
+      "resourceType": "Endpoint",
+      "id": "kigali-south-sms",
+      "status": "active",
+      "connectionType": {
+        "system": "http://terminology.hl7.org/CodeSystem/endpoint-connection-type",
+        "code": "hl7-fhir-rest",
+        "display": "HL7 FHIR REST"
+      },
+      "name": "Kigali South SMS Gateway",
+      "payloadType": [
+        {
+          "coding": [
+            { "system": "http://hl7.org/fhir/resource-types", "code": "CommunicationRequest" }
+          ]
+        }
+      ],
+      "payloadMimeType": ["application/fhir+json"],
+      "address": "https://sms-gateway.example.com/webhook/intelligence"
+    },
     "status": "ACTIVE",
     "config": {
       "authHeader": "X-API-Key",
@@ -446,7 +482,7 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
 
 | Error Status | Condition |
 |:-------------|:----------|
-| `400` | Invalid request body (missing required fields, invalid URL) |
+| `400` | Invalid request body (missing required fields, invalid URL, `definition.resourceType` not `Endpoint`, `definition.name` mismatch) |
 | `409` | Adaptor `name` already exists |
 
 ---
@@ -469,8 +505,26 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
     {
       "id": "c3d4e5f6-0001-4000-c000-000000000001",
       "name": "Kigali South SMS Gateway",
-      "endpointUrl": "https://sms-gateway.example.com/webhook/intelligence",
-      "deliveryMode": "WEBHOOK",
+      "definition": {
+        "resourceType": "Endpoint",
+        "id": "kigali-south-sms",
+        "status": "active",
+        "connectionType": {
+          "system": "http://terminology.hl7.org/CodeSystem/endpoint-connection-type",
+          "code": "hl7-fhir-rest",
+          "display": "HL7 FHIR REST"
+        },
+        "name": "Kigali South SMS Gateway",
+        "payloadType": [
+          {
+            "coding": [
+              { "system": "http://hl7.org/fhir/resource-types", "code": "CommunicationRequest" }
+            ]
+          }
+        ],
+        "payloadMimeType": ["application/fhir+json"],
+        "address": "https://sms-gateway.example.com/webhook/intelligence"
+      },
       "status": "ACTIVE",
       "config": { ... },
       "createdAt": "2026-03-20T08:00:00Z",
@@ -511,8 +565,26 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
 ```json
 {
   "name": "Kigali South SMS Gateway",
-  "endpointUrl": "https://sms-gateway-v2.example.com/webhook/intelligence",
-  "deliveryMode": "WEBHOOK",
+  "definition": {
+    "resourceType": "Endpoint",
+    "id": "kigali-south-sms",
+    "status": "active",
+    "connectionType": {
+      "system": "http://terminology.hl7.org/CodeSystem/endpoint-connection-type",
+      "code": "hl7-fhir-rest",
+      "display": "HL7 FHIR REST"
+    },
+    "name": "Kigali South SMS Gateway",
+    "payloadType": [
+      {
+        "coding": [
+          { "system": "http://hl7.org/fhir/resource-types", "code": "CommunicationRequest" }
+        ]
+      }
+    ],
+    "payloadMimeType": ["application/fhir+json"],
+    "address": "https://sms-gateway-v2.example.com/webhook/intelligence"
+  },
   "status": "ACTIVE",
   "config": {
     "authHeader": "Authorization",

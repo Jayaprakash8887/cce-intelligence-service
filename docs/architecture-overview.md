@@ -90,7 +90,7 @@ sequenceDiagram
 | **`action_definition` table** | Compliance Service | FHIR ActivityDefinition resources — **not accessed** by Intelligence Service at runtime |
 | **`action_run` table** | Compliance Service | Tracks trigger lifecycle — `action_run_id` stored in `delivery_run` for traceability only |
 | **Trigger consumption & routing** | Intelligence Service | Consumes self-contained triggers, resolves channel subscriptions (with step-level routing), fan-out delivery |
-| **`receiver_adaptor` table** | Intelligence Service | Registered webhook endpoints |
+| **`receiver_adaptor` table** | Intelligence Service | Registered webhook endpoints (FHIR Endpoint resource in `definition` column) |
 | **`channel_subscription` table** | Intelligence Service | Many-to-many routing map (protocol × action_id × channel → adaptors) |
 | **`delivery_run` table** | Intelligence Service | Delivery lifecycle per (action_run × adaptor); `action_run_id` stored for traceability (not a runtime FK) |
 | **`delivery_audit_log` table** | Intelligence Service | Audit trail for delivery operations |
@@ -428,8 +428,7 @@ erDiagram
     RECEIVER_ADAPTOR {
         uuid id PK
         varchar name
-        varchar endpoint_url
-        varchar delivery_mode
+        jsonb definition
     }
 
     DELIVERY_RUN {
@@ -508,7 +507,7 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 ## 7. Security
 
 - **Authentication & Authorization:** Handled by the **CCE API Gateway**. This service does not implement security directly — all requests arrive pre-authenticated.
-- **Webhook credentials:** Stored in `receiver_adaptor.config` JSONB. The **external Receiver Adaptor operator** generates and manages their own auth credentials (API keys, bearer tokens, mTLS certs). A CCE admin registers the adaptor via `POST /v1/receiver-adaptors`, placing the operator-provided credentials into `config`. The `WebhookDeliveryClient` reads `authHeader` + `authValue` at dispatch time and injects them into the outbound HTTP request. The Intelligence Service never *issues* tokens — it only *stores and presents* credentials that the receiving system expects.
+- **Webhook credentials:** Stored in `receiver_adaptor.config` JSONB (separate from the FHIR Endpoint in `definition`). The **external Receiver Adaptor operator** generates and manages their own auth credentials (API keys, bearer tokens, mTLS certs). A CCE admin registers the adaptor via `POST /v1/receiver-adaptors`, placing the operator-provided credentials into `config`. The `WebhookDeliveryClient` reads `authHeader` + `authValue` at dispatch time and injects them into the outbound HTTP request. The Intelligence Service never *issues* tokens — it only *stores and presents* credentials that the receiving system expects.
 - **Credential protection:** `authValue` in `receiver_adaptor.config` should be encrypted at rest in production (e.g., via PostgreSQL pgcrypto or application-level encryption). Credentials are **never logged** — the `WebhookDeliveryClient` masks them in all log output.
 - Actuator endpoints are publicly accessible for health checks and monitoring.
 

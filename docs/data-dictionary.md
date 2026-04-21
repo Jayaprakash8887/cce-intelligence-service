@@ -34,8 +34,7 @@ erDiagram
     RECEIVER_ADAPTOR {
         uuid id PK
         varchar name
-        varchar endpoint_url
-        varchar delivery_mode
+        jsonb definition
         varchar status
         jsonb config
         timestamptz created_at
@@ -102,20 +101,21 @@ erDiagram
 
 ## 3. receiver_adaptor
 
-Stores registered **Receiver Adaptors** — external webhook endpoints that receive intelligence actions. Routing is handled by the `channel_subscription` table, not by a column on this entity.
+Stores registered **Receiver Adaptors** — external webhook endpoints that receive intelligence actions. The adaptor's identity, address, and payload capabilities are stored as a **FHIR R4 Endpoint** resource in the `definition` column. Routing is handled by the `channel_subscription` table, not by a column on this entity.
 
 ### Columns
 
 | Column | Data Type | Nullable | Default | Description |
 |--------|-----------|----------|---------|-------------|
 | `id` | `UUID` | **NOT NULL** | `gen_random_uuid()` | Primary key. |
-| `name` | `VARCHAR` | **NOT NULL** | — | Human-readable name (e.g., "Kigali South SMS Gateway"). |
-| `endpoint_url` | `VARCHAR` | **NOT NULL** | — | Webhook URL for action delivery (must be HTTPS in production). |
-| `delivery_mode` | `VARCHAR` | **NOT NULL** | `'WEBHOOK'` | Delivery mode. See [DeliveryMode](#deliverymode). |
+| `name` | `VARCHAR` | **NOT NULL** | — | Human-readable adaptor name. Must match `definition.name`. Denormalized for unique constraint and listing queries. |
+| `definition` | `JSONB` | **NOT NULL** | — | FHIR R4 **Endpoint** resource. Contains the adaptor's address, connection type, supported payload types, and status. See [JSONB: definition](#receiver_adaptor--definition). |
 | `status` | `VARCHAR` | **NOT NULL** | `'ACTIVE'` | `ACTIVE` or `INACTIVE`. Only active adaptors receive deliveries. |
 | `config` | `JSONB` | Yes | — | Additional adaptor configuration (auth headers, retry overrides, custom headers). See [JSONB: config](#receiver_adaptor--config). |
 | `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Registration timestamp. |
 | `updated_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Last update timestamp. |
+
+> **FHIR alignment:** The `definition` column stores a complete FHIR Endpoint resource. The `WebhookDeliveryClient` reads the delivery address from `definition->'address'` and the connection type from `definition->'connectionType'->>'code'` at dispatch time.
 
 ### Constraints & Indexes
 
@@ -123,7 +123,8 @@ Stores registered **Receiver Adaptors** — external webhook endpoints that rece
 |------|------|---------|
 | Primary Key | `receiver_adaptor_pkey` | `id` |
 | Unique | `receiver_adaptor_name_key` | `name` — Unique adaptor name. |
-| Check | — | `delivery_mode IN ('WEBHOOK')` |
+| Check | — | `definition->>'resourceType' = 'Endpoint'` |
+| Check | — | `definition->>'address' IS NOT NULL` |
 | Check | — | `status IN ('ACTIVE', 'INACTIVE')` |
 
 ---
@@ -164,7 +165,7 @@ Maps **(protocol_definition, action_id, channel)** → **receiver_adaptor** for 
 Step-specific subscriptions take precedence over wildcard subscriptions. The application layer deduplicates — if a step-specific row exists for an adaptor, the wildcard row for the same adaptor is skipped.
 
 ```sql
-SELECT cs.id, cs.receiver_adaptor_id, ra.endpoint_url, ra.config, cs.action_id
+SELECT cs.id, cs.receiver_adaptor_id, ra.definition->>'address' AS endpoint_url, ra.definition, ra.config, cs.action_id
 FROM channel_subscription cs
 JOIN receiver_adaptor ra ON ra.id = cs.receiver_adaptor_id
 WHERE cs.protocol_definition_id = :protocolDefinitionId
@@ -298,12 +299,15 @@ Intelligence Service categorization of actions. Carried directly in the trigger 
 | `ESCALATION` | `CommunicationRequest` | Elevated alert to supervisor/authority (differentiated by severity) |
 | `COORDINATION` | `Task` / `ServiceRequest` | Cross-system task creation or referral |
 
-### DeliveryMode
+### ConnectionType (FHIR Endpoint)
 
-| Value | Description | Status |
-|-------|-------------|--------|
-| `WEBHOOK` | HTTP POST to adaptor endpoint | 1.0.0 |
-| `TOPIC_SUBSCRIPTION` | Adaptor pulls from a Kafka topic | Future |
+The delivery mechanism is now defined by the FHIR Endpoint `connectionType` in `receiver_adaptor.definition`, using the standard FHIR [endpoint-connection-type](http://terminology.hl7.org/CodeSystem/endpoint-connection-type) CodeSystem:
+
+| Code | Display | Description |
+|------|---------|-------------|
+| `hl7-fhir-rest` | HL7 FHIR REST | RESTful FHIR endpoint (webhook POST) |
+| `hl7-fhir-msg` | HL7 FHIR Messaging | FHIR messaging endpoint |
+| `secure-email` | Secure Email | Secure email delivery |
 
 ### IntelligenceSeverity
 
@@ -318,11 +322,52 @@ Intelligence Service categorization of actions. Carried directly in the trigger 
 
 ## 9. JSONB Column Schemas
 
+### `receiver_adaptor` → `definition`
+
+A **FHIR R4 Endpoint** resource describing the adaptor's identity, connection type, supported payload types, and address.
+
+```json
+{
+  "resourceType": "Endpoint",
+  "id": "openmrs-prod",
+  "status": "active",
+  "connectionType": {
+    "system": "http://terminology.hl7.org/CodeSystem/endpoint-connection-type",
+    "code": "hl7-fhir-rest",
+    "display": "HL7 FHIR REST"
+  },
+  "name": "OpenMRS Production FHIR R4",
+  "payloadType": [
+    {
+      "coding": [
+        { "system": "http://hl7.org/fhir/resource-types", "code": "CommunicationRequest" }
+      ]
+    }
+  ],
+  "payloadMimeType": ["application/fhir+json"],
+  "address": "https://openmrs.example.org/ws/fhir2/R4"
+}
+```
+
+| Field | FHIR Path | Description |
+|-------|-----------|-------------|
+| Adaptor ID | `Endpoint.id` | Logical identifier within the Endpoint resource. |
+| Status | `Endpoint.status` | FHIR lifecycle status (`active`, `suspended`, `error`, `off`). Application uses the table-level `status` column for routing decisions. |
+| Connection type | `Endpoint.connectionType` | Protocol/mechanism (e.g., `hl7-fhir-rest`, `hl7-fhir-msg`, `secure-email`). Replaces the former `delivery_mode` column. |
+| Name | `Endpoint.name` | Human-readable name. Must match the table's `name` column. |
+| Payload types | `Endpoint.payloadType` | FHIR resource types this endpoint accepts (`CommunicationRequest`, `Task`). |
+| MIME types | `Endpoint.payloadMimeType` | Accepted content types (typically `application/fhir+json`). |
+| Address | `Endpoint.address` | Webhook URL for action delivery. Must be HTTPS in production. Replaces the former `endpoint_url` column. |
+
+> **Validation:** On `POST /v1/receiver-adaptors`, the service validates that `definition.resourceType == "Endpoint"`, `definition.address` is a valid URL, and `definition.name` matches the top-level `name` field.
+
 ### `receiver_adaptor` → `config`
 
 **Credential ownership:** The external Receiver Adaptor operator generates and manages their own auth credentials (API keys, bearer tokens, etc.). A CCE admin registers the adaptor via `POST /v1/receiver-adaptors`, placing the operator-provided credentials into `config`. The `WebhookDeliveryClient` reads `authHeader` + `authValue` at dispatch time and injects them into the outbound HTTP request. The Intelligence Service never *issues* tokens — it only *stores and presents* credentials that the receiving system expects.
 
 > **Security note:** `authValue` contains sensitive credentials and should be encrypted at rest in production (e.g., via PostgreSQL pgcrypto or application-level encryption). Credentials are **never logged** — the `WebhookDeliveryClient` masks them in all log output.
+
+> **Separation of concerns:** The FHIR Endpoint in `definition` describes *what* the adaptor is and *where* to deliver. The `config` JSONB stores *how* to authenticate and operational overrides — concerns that are outside the FHIR Endpoint spec.
 
 ```json
 {
