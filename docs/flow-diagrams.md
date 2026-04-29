@@ -71,7 +71,7 @@ sequenceDiagram
     Consumer->>Engine: processTrigger(event)
 
     Note over Engine,DB: Step 1 — Idempotency Check
-    Engine->>DB: findDeliveredSubscriptions(actionRunId)
+    Engine->>DB: findDeliveredSubscriptions(intelligenceEventId)
     DB-->>Engine: already-delivered set (may be empty)
 
     Note over Engine,Router: Step 2 — Resolve Channel Subscriptions (step-level)
@@ -214,7 +214,7 @@ sequenceDiagram
     Dispatcher->>Audit: log(DISPATCHED, adaptorName, definition.address)
 
     Dispatcher->>Adaptor: HTTP POST definition.address
-    Note right of Adaptor: Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id: {runId}<br/>X-CCE-Action-Run-Id: {actionRunId}<br/>X-CCE-Signature-256: HMAC-SHA256 (if configured)<br/>+ adaptor auth headers from config
+    Note right of Adaptor: Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id: {runId}<br/>X-CCE-Intelligence-Event-Id: {intelligenceEventId}<br/>X-CCE-Signature-256: HMAC-SHA256 (if configured)<br/>+ adaptor auth headers from config
 
     alt HTTP 2xx
         Adaptor-->>Dispatcher: 200 OK
@@ -244,7 +244,7 @@ flowchart LR
 
     subgraph "HTTP POST to Receiver Adaptor"
         H
-        Headers[\"Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id<br/>X-CCE-Action-Run-Id<br/>X-CCE-Signature-256 (if webhookSecret configured)<br/>+ adaptor.config authHeader + customHeaders\"]
+        Headers["Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id<br/>X-CCE-Intelligence-Event-Id<br/>X-CCE-Signature-256 (if webhookSecret configured)<br/>+ adaptor.config authHeader + customHeaders"]
     end
 ```
 

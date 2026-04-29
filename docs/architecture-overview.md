@@ -62,7 +62,7 @@ graph TB
 
 ## 1.1 Compliance Service Contract
 
-The **CCE Compliance Service** (v1.1.0+) is the upstream publisher. When a step's status changes, the Compliance Service's `IntelligenceActionEvaluator` evaluates PlanDefinition intelligence actions, resolves all metadata (action type, severity, intelligence channel, protocol definition), creates `ActionRun` records (TRIGGERED → PUBLISHED), and publishes a **self-contained** `IntelligenceTriggerEvent` to `cce.intelligence.triggers`.
+The **CCE Compliance Service** (v1.1.0+) is the upstream publisher. When a step's status changes, the Compliance Service's `IntelligenceActionEvaluator` evaluates PlanDefinition intelligence actions, resolves all metadata (action type, severity, intelligence channel, protocol definition), creates `IntelligenceEvent` records, and publishes a **self-contained** `IntelligenceTriggerEvent` to `cce.intelligence.triggers`.
 
 ```mermaid
 sequenceDiagram
@@ -74,7 +74,7 @@ sequenceDiagram
     CS->>CS: Step state change detected (due, overdue, missed, or completed)
     CS->>CS: Evaluate intelligence action conditions
     CS->>CS: Resolve actionType, severity, intelligenceChannel, protocolDefinitionId
-    CS->>CS: Create ActionRun (TRIGGERED → PUBLISHED)
+    CS->>CS: Create IntelligenceEventLog (published=false → true)
     CS->>Kafka: Publish IntelligenceTriggerEvent (fat event)
     Note over CS,Kafka: Event carries all metadata — no<br/>Compliance table reads needed by IS
     Kafka->>IS: Deliver trigger event
@@ -88,11 +88,11 @@ sequenceDiagram
 |---|---|---|
 | **Intelligence action evaluation** | Compliance Service | Evaluates PlanDefinition conditions, resolves all metadata, publishes self-contained triggers to Kafka |
 | **`action_definition` table** | Compliance Service | FHIR ActivityDefinition resources — **not accessed** by Intelligence Service at runtime |
-| **`action_run` table** | Compliance Service | Tracks trigger lifecycle — `action_run_id` stored in `delivery_run` for traceability only |
+| **`intelligence_event_log` table** | Compliance Service | Tracks intelligence action execution and evaluation context. `intelligence_event_log.id` maps to `intelligenceEventId` in the trigger event — stored in `delivery_run` for traceability only |
 | **Trigger consumption & routing** | Intelligence Service | Consumes self-contained triggers, resolves channel subscriptions (with step-level routing), fan-out delivery |
 | **`receiver_adaptor` table** | Intelligence Service | Registered webhook endpoints (FHIR Endpoint resource in `definition` column) |
 | **`channel_subscription` table** | Intelligence Service | Many-to-many routing map (protocol × action_id × channel → adaptors) |
-| **`delivery_run` table** | Intelligence Service | Delivery lifecycle per (action_run × adaptor); `action_run_id` stored for traceability (not a runtime FK) |
+| **`delivery_run` table** | Intelligence Service | Delivery lifecycle per (intelligence_event × adaptor); `intelligence_event_id` stored for traceability (maps to `intelligence_event_log.id`, not a runtime FK) |
 | **`delivery_audit_log` table** | Intelligence Service | Audit trail for delivery operations |
 
 > **Key invariant:** The Compliance Service evaluates *when* to act, *what* action to take, and publishes a self-contained trigger event with all resolved metadata. The Intelligence Service decides *where* to deliver it (step-level routing via channel subscriptions) and *how* (FHIR payload + webhook to receiver adaptors). This separation allows routing to evolve independently of clinical logic, and the fat event design eliminates all cross-service runtime dependencies.
@@ -163,7 +163,7 @@ src/main/java/org/openphc/cce/intelligence/
 │   └── ObservabilityConfig.java                   # Custom metrics
 ├── domain/
 │   ├── entity/
-│   │   ├── DeliveryRun.java                       # Delivery lifecycle per (action_run × adaptor)
+│   │   ├── DeliveryRun.java                       # Delivery lifecycle per (intelligence_event × adaptor)
 │   │   ├── ReceiverAdaptor.java                   # Registered webhook endpoint
 │   │   ├── ChannelSubscription.java               # Many-to-many routing map (with step-level action_id)
 │   │   └── DeliveryAuditLog.java                  # Audit trail entry
@@ -228,7 +228,7 @@ The `IntelligenceEngine` is the central orchestrator. The pipeline is deliberate
 flowchart TD
     START["IntelligenceTriggerEvent received<br/>from cce.intelligence.triggers"] --> S1
 
-    S1["Step 1: Idempotency Check<br/>(actionRunId + subscriptions already delivered?)"]
+    S1["Step 1: Idempotency Check<br/>(intelligenceEventId + subscriptions already delivered?)"]
     S1 -->|"All subscriptions delivered"| DUP["Return early — no-op"]
     S1 -->|"New or partial"| S2
 
@@ -253,8 +253,8 @@ The trigger event is **self-contained** — all fields needed for routing and FH
 
 ```
 IntelligenceTriggerEvent
-  ├── actionType ───────────► Determines FHIR resource type (CommunicationRequest / Task)
-  ├── severity ─────────────► FHIR priority mapping + extension
+  ├── actionType ───────────► FHIR kind (CommunicationRequest / Task / ServiceRequest) → mapped to Intelligence ActionType (NOTIFICATION / ESCALATION / COORDINATION)
+  ├── severity ─────────────► FHIR priority mapping + extension; also used in actionType mapping (CommunicationRequest + HIGH/CRITICAL = ESCALATION, otherwise NOTIFICATION)
   ├── intelligenceChannel ───► FHIR recipient + routing lookup
   ├── protocolDefinitionId ─► channel_subscription routing key
   ├── actionId ─────────────► channel_subscription routing key (step-level) + FHIR about[1].display
@@ -262,13 +262,26 @@ IntelligenceTriggerEvent
   ├── protocolCanonical ────► FHIR about[0].reference
   ├── stepState ────────────► FHIR extension (cce-step-state)
   ├── detectedAt ───────────► FHIR authoredOn
-  ├── actionRunId ──────────► delivery_run.action_run_id (traceability)
+  ├── intelligenceEventId ───────► delivery_run.intelligence_event_id (traceability)
   └── actionDefinitionId ──► delivery_run.action_definition_id (traceability)
 ```
 
 ### 4.2 FHIR Payload Generation
 
 The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from the trigger event fields. All structured data the receiver needs is in standard FHIR fields and CCE extensions. A default human-readable summary is generated for `payload.contentString` / `description`.
+
+#### ActionType Mapping
+
+The trigger event's `actionType` carries the FHIR `ActivityDefinition.kind` value (`CommunicationRequest`, `Task`, `ServiceRequest`). The Intelligence Service maps this to its own semantic `ActionType` at consumption time:
+
+| Trigger Event `actionType` | Severity | Intelligence `ActionType` | FHIR Payload Resource |
+|---|---|---|---|
+| `CommunicationRequest` | `HIGH` or `CRITICAL` | `ESCALATION` | `CommunicationRequest` |
+| `CommunicationRequest` | `LOW` or `MEDIUM` | `NOTIFICATION` | `CommunicationRequest` |
+| `Task` | any | `COORDINATION` | `Task` |
+| `ServiceRequest` | any | `COORDINATION` | `Task` |
+
+The mapped `ActionType` is stored in `delivery_run.action_type` and used in the FHIR payload's `category` / `code` coding, the `contentString` summary, and the REST API response.
 
 #### Payload Resource Types
 
@@ -314,8 +327,8 @@ The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from
       "valueCode": "high"
     },
     {
-      "url": "http://openphc.org/fhir/StructureDefinition/cce-action-run-id",
-      "valueId": "action-run-uuid"
+      "url": "http://openphc.org/fhir/StructureDefinition/cce-intelligence-event-id",
+      "valueId": "intelligence-event-uuid"
     },
     {
       "url": "http://openphc.org/fhir/StructureDefinition/cce-step-state",
@@ -432,7 +445,7 @@ erDiagram
 
     DELIVERY_RUN {
         uuid id PK
-        uuid action_run_id
+        uuid intelligence_event_id
         uuid channel_subscription_id FK
         varchar status
     }
@@ -497,9 +510,9 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 
 ### 6.2 Idempotency
 
-- **Per-action_run:** `(action_run_id, channel_subscription_id)` unique constraint on `delivery_run` prevents duplicate processing for the same action_run + adaptor combination.
-- **Cross-trigger:** If the Compliance Service publishes duplicate trigger events for the same `action_run`, the Intelligence Service's idempotency guard ensures each adaptor gets exactly one `delivery_run`.
-- **Per-adaptor:** Within a single action_run's fan-out, each subscribed adaptor gets exactly one `delivery_run`.
+- **Per-intelligence_event:** `(intelligence_event_id, channel_subscription_id)` unique constraint on `delivery_run` prevents duplicate processing for the same intelligence event + adaptor combination.
+- **Cross-trigger:** If the Compliance Service publishes duplicate trigger events for the same `intelligence_event_log` record, the Intelligence Service's idempotency guard ensures each adaptor gets exactly one `delivery_run`.
+- **Per-adaptor:** Within a single intelligence event's fan-out, each subscribed adaptor gets exactly one `delivery_run`.
 
 ---
 
@@ -530,7 +543,7 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 ### 8.2 Logging & Tracing
 
 - **Format:** `timestamp [thread] [correlationId] level logger - message`
-- **MDC fields:** `correlationId`, `actionRunId`, `deliveryRunId`, `subject`, `protocolCanonical`
+- **MDC fields:** `correlationId`, `intelligenceEventId`, `deliveryRunId`, `subject`, `protocolCanonical`
 - **Tracing:** OpenTelemetry (OTLP), correlation propagated via trigger event metadata
 - **Health:** `/actuator/health` (liveness + readiness), `/actuator/prometheus`
 

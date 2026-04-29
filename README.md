@@ -41,7 +41,7 @@ The service owns 4 tables (zero read-only Compliance dependencies at runtime):
 
 | Table | Owner | Purpose |
 |-------|-------|--------|
-| `delivery_run` | Intelligence | Delivery lifecycle per (action_run × adaptor) |
+| `delivery_run` | Intelligence | Delivery lifecycle per (intelligence_event × adaptor) |
 | `receiver_adaptor` | Intelligence | Registered webhook endpoints |
 | `channel_subscription` | Intelligence | Many-to-many routing map (protocol × action_id × channel → adaptors) |
 | `delivery_audit_log` | Intelligence | Audit trail |

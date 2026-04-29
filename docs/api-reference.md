@@ -34,7 +34,7 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
 |-----------|------|----------|-------------|
 | `status` | `String` | No | Filter by status: `PENDING`, `EXECUTING`, `DELIVERED`, `FAILED`, `CANCELLED` |
 | `subject` | `String` | No | Filter by patient UPID |
-| `actionRunId` | `UUID` | No | Filter by action run |
+| `intelligenceEventId` | `UUID` | No | Filter by intelligence event |
 | `actionDefinitionId` | `UUID` | No | Filter by action definition |
 | `actionType` | `String` | No | Filter by action type: `NOTIFICATION`, `ESCALATION`, `COORDINATION` |
 | `severity` | `String` | No | Filter by severity: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
@@ -50,7 +50,7 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
   "data": [
     {
       "id": "b2c3d4e5-0001-4000-b000-000000000001",
-      "actionRunId": "990e8400-e29b-41d4-a716-446655440010",
+      "intelligenceEventId": "990e8400-e29b-41d4-a716-446655440010",
       "actionDefinitionId": "a1b2c3d4-0001-4000-a000-000000000001",
       "actionType": "NOTIFICATION",
       "actionId": "anc-visit-2",
@@ -93,7 +93,7 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
 {
   "data": {
     "id": "b2c3d4e5-0001-4000-b000-000000000001",
-    "actionRunId": "990e8400-e29b-41d4-a716-446655440010",
+    "intelligenceEventId": "990e8400-e29b-41d4-a716-446655440010",
     "actionDefinitionId": "a1b2c3d4-0001-4000-a000-000000000001",
     "actionType": "NOTIFICATION",
     "actionId": "anc-visit-2",
