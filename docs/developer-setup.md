@@ -99,8 +99,8 @@ All configuration can be overridden via environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `WEBHOOK_CONNECT_TIMEOUT_MS` | `10000` | WebClient connection timeout |
-| `WEBHOOK_READ_TIMEOUT_MS` | `30000` | WebClient read timeout |
+| `WEBHOOK_CONNECT_TIMEOUT_MS` | `5000` | WebClient connection timeout |
+| `WEBHOOK_READ_TIMEOUT_MS` | `10000` | WebClient read timeout |
 | `WEBHOOK_RETRY_ATTEMPTS` | `3` | Maximum delivery retry attempts |
 | `WEBHOOK_RETRY_INTERVAL_MS` | `2000` | Fixed delay between retries |
 
@@ -164,7 +164,7 @@ cce-intelligence-service/
 │   └── main/
 │       ├── java/org/openphc/cce/intelligence/
 │       │   ├── IntelligenceServiceApplication.java
-│       │   ├── config/          # Spring configuration (Kafka, WebClient, Async)
+│       │   ├── config/          # Spring configuration (Kafka, WebClient, Async, Properties, Metrics)
 │       │   ├── domain/          # Entities, enums, repositories
 │       │   │   ├── entity/      # IntelligenceDelivery, ReceiverAdaptor, ChannelSubscription, IntelligenceDeliveryAuditLog
 │       │   │   ├── enums/       # IntelligenceDeliveryStatus, ActionType, IntelligenceSeverity
@@ -278,7 +278,7 @@ Stage 2: Runtime (eclipse-temurin:21-jre-alpine)
 | `./gradlew build -x test` | Build without tests |
 | `./gradlew build` | Build + run unit tests |
 | `./gradlew test` | Run unit tests only |
-| `./gradlew integrationTest` | Run integration tests (EmbeddedKafka + H2) |
+| `./gradlew integrationTest` | Run integration tests (H2 + Mocks) |
 | `./gradlew test jacocoTestReport` | Unit tests + coverage report |
 | `./gradlew dependencies` | Show dependency tree |
 | `./gradlew bootRun` | Run application via Gradle |
@@ -292,13 +292,15 @@ Stage 2: Runtime (eclipse-temurin:21-jre-alpine)
 | `spring-boot-starter-test` | JUnit 5, Mockito, AssertJ |
 | `spring-kafka-test` | Kafka consumer test utilities |
 | `okhttp3:mockwebserver` | Mock webhook endpoints for delivery tests |
+| `h2` | In-memory database for integration tests |
+| `awaitility` | Async test assertion helpers |
 
 ### 8.2 Test Categories
 
 | Category | Location | Infrastructure |
 |---|---|---|
 | Unit tests | `src/test/java` | Mocked dependencies |
-| Integration tests | `src/integrationTest/java` | EmbeddedKafka + H2 in-memory (PostgreSQL mode) |
+| Integration tests | `src/integrationTest/java` | H2 in-memory DB + @MockBean (no containers) |
 | API tests | `src/test/java` | MockMvc |
 | Webhook tests | `src/test/java` | OkHttp MockWebServer |
 

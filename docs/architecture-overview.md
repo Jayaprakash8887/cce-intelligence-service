@@ -114,7 +114,7 @@ sequenceDiagram
 | Expression evaluation | ~~Apache Johnzon JsonLogic~~ | ~~2.0.2~~ | *Removed — evaluation handled by Compliance Service* |
 | HTTP client | Spring WebClient (reactive, non-blocking) | (Spring Boot managed) |
 | Observability | Micrometer + Prometheus | (Spring Boot managed) |
-| Testing | JUnit 5, Testcontainers, MockMvc | |
+| Testing | JUnit 5, MockMvc, MockWebServer, H2 | |
 
 ### Key Gradle Dependencies
 
@@ -141,10 +141,10 @@ implementation 'io.micrometer:micrometer-registry-prometheus'
 // Testing
 testImplementation 'org.springframework.boot:spring-boot-starter-test'
 testImplementation 'org.springframework.kafka:spring-kafka-test'
-testImplementation 'org.testcontainers:postgresql'
-testImplementation 'org.testcontainers:kafka'
-testImplementation 'org.testcontainers:junit-jupiter'
-testImplementation 'com.squareup.okhttp3:mockwebserver'  // Mock webhook endpoints
+testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'  // Mock webhook endpoints
+testImplementation 'com.h2database:h2'                         // In-memory DB for integration tests
+testImplementation 'org.awaitility:awaitility'                 // Async test assertions
+testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 ```
 
 
@@ -158,9 +158,9 @@ src/main/java/org/openphc/cce/intelligence/
 ├── config/
 │   ├── KafkaConsumerConfig.java                   # Consumer factory, error handler, DLQ
 │   ├── WebClientConfig.java                       # WebClient for webhook delivery
-│   ├── JpaConfig.java                             # JPA/Hibernate settings
+│   ├── IntelligenceProperties.java                # @ConfigurationProperties for webhook settings
 │   ├── AsyncConfig.java                           # @EnableAsync for audit writes
-│   └── ObservabilityConfig.java                   # Custom metrics
+│   └── MetricsConfig.java                         # Custom Gauge metrics (active subscriptions)
 ├── domain/
 │   ├── entity/
 │   │   ├── IntelligenceDelivery.java                       # Delivery lifecycle per (intelligence_event × adaptor)
@@ -216,7 +216,7 @@ src/test/java/org/openphc/cce/intelligence/           # Unit tests
 src/integrationTest/java/org/openphc/cce/intelligence/ # Integration tests
 ```
 
-**Total:** ~26 source files across 10 packages.
+**Total:** ~44 source files across 10 packages.
 
 ---
 
@@ -532,7 +532,7 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `cce.intelligence.triggers.received` | Counter | `step_state` | Triggers received from Kafka |
+| `cce.intelligence.triggers.received` | Counter | `trigger_type` | Triggers received from Kafka |
 | `cce.intelligence.deliveries.dispatched` | Counter | `action_type`, `severity` | Deliveries dispatched to adaptors |
 | `cce.intelligence.deliveries.delivered` | Counter | `action_type` | Successful deliveries |
 | `cce.intelligence.deliveries.failed` | Counter | `action_type` | Failed deliveries |

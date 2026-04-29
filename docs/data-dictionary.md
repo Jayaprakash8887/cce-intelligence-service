@@ -483,8 +483,8 @@ Content varies by event type:
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `cce.intelligence.webhook.connect-timeout-ms` | `int` | `10000` | WebClient connection timeout |
-| `cce.intelligence.webhook.read-timeout-ms` | `int` | `30000` | WebClient read timeout |
+| `cce.intelligence.webhook.connect-timeout-ms` | `int` | `5000` | WebClient connection timeout |
+| `cce.intelligence.webhook.read-timeout-ms` | `int` | `10000` | WebClient read timeout |
 | `cce.intelligence.webhook.retry-attempts` | `int` | `3` | Max delivery retry attempts |
 | `cce.intelligence.webhook.retry-interval-ms` | `long` | `2000` | Delay between retries |
 
@@ -494,7 +494,7 @@ Content varies by event type:
 
 | Metric Name | Type | Tags | Description |
 |-------------|------|------|-------------|
-| `cce.intelligence.triggers.received` | Counter | `step_state` | Triggers received from Kafka |
+| `cce.intelligence.triggers.received` | Counter | `trigger_type` | Triggers received from Kafka |
 | `cce.intelligence.deliveries.dispatched` | Counter | `action_type`, `severity` | Deliveries dispatched to adaptors |
 | `cce.intelligence.deliveries.delivered` | Counter | `action_type` | Successful deliveries |
 | `cce.intelligence.deliveries.failed` | Counter | `action_type` | Failed deliveries |

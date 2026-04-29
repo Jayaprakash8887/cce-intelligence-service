@@ -390,7 +390,7 @@ Channel Subscriptions define the **many-to-many routing** between protocol defin
 | Error Status | Condition |
 |:-------------|:----------|
 | `404` | Subscription not found |
-| `422` | Subscription has active (PENDING/EXECUTING) intelligence deliveries |
+| `409` | Subscription has active (PENDING/EXECUTING) intelligence deliveries |
 
 ---
 
@@ -622,7 +622,7 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
 | Error Status | Condition |
 |:-------------|:----------|
 | `404` | Receiver adaptor not found |
-| `422` | Adaptor has active intelligence deliveries or active channel subscriptions |
+| `409` | Adaptor has active intelligence deliveries or active channel subscriptions |
 
 ---
 
