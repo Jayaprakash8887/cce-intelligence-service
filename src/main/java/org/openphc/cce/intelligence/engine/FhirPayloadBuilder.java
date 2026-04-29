@@ -36,7 +36,7 @@ public class FhirPayloadBuilder {
     private JsonNode buildCommunicationRequest(IntelligenceTriggerEvent event, UUID deliveryId) {
         ObjectNode resource = objectMapper.createObjectNode();
         resource.put("resourceType", "CommunicationRequest");
-        resource.put("id", deliveryId.toString());
+        resource.put("id", deliveryId != null ? deliveryId.toString() : "pending");
         resource.put("status", "active");
         resource.put("priority", mapSeverityToFhirPriority(event.getSeverity()));
 
@@ -44,7 +44,7 @@ public class FhirPayloadBuilder {
         ArrayNode identifiers = resource.putArray("identifier");
         ObjectNode identifier = identifiers.addObject();
         identifier.put("system", "http://openphc.org/fhir/intelligence-delivery-id");
-        identifier.put("value", deliveryId.toString());
+        identifier.put("value", deliveryId != null ? deliveryId.toString() : "pending");
 
         // Category
         ArrayNode categories = resource.putArray("category");
@@ -90,7 +90,7 @@ public class FhirPayloadBuilder {
     private JsonNode buildTask(IntelligenceTriggerEvent event, UUID deliveryId) {
         ObjectNode resource = objectMapper.createObjectNode();
         resource.put("resourceType", "Task");
-        resource.put("id", deliveryId.toString());
+        resource.put("id", deliveryId != null ? deliveryId.toString() : "pending");
         resource.put("status", "requested");
         resource.put("intent", "order");
         resource.put("priority", mapSeverityToFhirPriority(event.getSeverity()));
@@ -99,7 +99,7 @@ public class FhirPayloadBuilder {
         ArrayNode identifiers = resource.putArray("identifier");
         ObjectNode identifier = identifiers.addObject();
         identifier.put("system", "http://openphc.org/fhir/intelligence-delivery-id");
-        identifier.put("value", deliveryId.toString());
+        identifier.put("value", deliveryId != null ? deliveryId.toString() : "pending");
 
         // Code
         ObjectNode code = resource.putObject("code");

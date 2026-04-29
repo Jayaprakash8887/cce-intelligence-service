@@ -13,9 +13,9 @@ import org.openphc.cce.intelligence.domain.repository.IntelligenceDeliveryAuditL
 import org.openphc.cce.intelligence.domain.repository.IntelligenceDeliveryRepository;
 import org.openphc.cce.intelligence.domain.repository.ReceiverAdaptorRepository;
 import org.openphc.cce.intelligence.kafka.consumer.IntelligenceTriggerConsumer;
+import org.openphc.cce.intelligence.kafka.model.IntelligenceTriggerEvent;
 import org.openphc.cce.intelligence.webhook.WebhookDeliveryClient;
 import org.openphc.cce.intelligence.webhook.WebhookResult;
-import org.openphc.cce.intelligence.kafka.model.IntelligenceTriggerEvent;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration;
@@ -30,7 +30,6 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -140,31 +139,69 @@ class IntelligenceEndToEndIntegrationTest {
 
         when(auditLogRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        when(webhookDeliveryClient.deliver(any(), any(), any(), any(), any())).thenReturn(
-                WebhookResult.success(1));
+        when(webhookDeliveryClient.deliver(any(), any(), any(), any(), any()))
+                .thenReturn(WebhookResult.success(200, 1));
+    }
+
+    private long countDelivered() {
+        return savedDeliveries.stream()
+                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
+                .map(IntelligenceDelivery::getId)
+                .distinct()
+                .count();
+    }
+
+    private long countFailed() {
+        return savedDeliveries.stream()
+                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.FAILED)
+                .map(IntelligenceDelivery::getId)
+                .distinct()
+                .count();
+    }
+
+    private IntelligenceDelivery getFirstDelivered() {
+        return savedDeliveries.stream()
+                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
+                .findFirst()
+                .orElseThrow();
     }
 
     @Test
     @Order(1)
     void testOverdueTriggerProducesDeliveries() {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "MEDIUM", "CommunicationRequest", "action-overdue-check");
-        try {
-            consumer.consume(event);
-        } catch (Exception e) {
-            System.err.println("TEST_DEBUG_EX: " + e.getClass().getName() + ": " + e.getMessage());
-            e.printStackTrace(System.err);
-        }
-        System.err.println("TEST_DEBUG: savedDeliveries.size=" + savedDeliveries.size());
-        savedDeliveries.forEach(d -> System.err.println("TEST_DEBUG: status=" + d.getStatus()));
+        consumer.consume(event);
 
-        List<IntelligenceDelivery> delivered = savedDeliveries.stream()
-                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
-                .toList();
-        assertThat(delivered).hasSize(3);
+        assertThat(countDelivered()).isEqualTo(3);
+
+        JsonNode payload = getFirstDelivered().getFhirPayload();
+        assertThat(payload.get("resourceType").asText()).isEqualTo("CommunicationRequest");
+        assertThat(payload.get("status").asText()).isEqualTo("active");
+        assertThat(payload.get("priority").asText()).isEqualTo("urgent");
     }
 
     @Test
     @Order(2)
+    void testEscalationCriticalPriority() {
+        IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "CRITICAL", "CommunicationRequest", "action-overdue-check");
+        consumer.consume(event);
+
+        assertThat(countDelivered()).isEqualTo(3);
+        assertThat(getFirstDelivered().getFhirPayload().get("priority").asText()).isEqualTo("asap");
+    }
+
+    @Test
+    @Order(3)
+    void testCoordinationTriggerBuildsFhirTask() {
+        IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "HIGH", "Task", "action-overdue-check");
+        consumer.consume(event);
+
+        assertThat(countDelivered()).isEqualTo(3);
+        assertThat(getFirstDelivered().getFhirPayload().get("resourceType").asText()).isEqualTo("Task");
+    }
+
+    @Test
+    @Order(4)
     void testDuplicateTriggerIdempotency() {
         UUID eventId = UUID.randomUUID();
         IntelligenceTriggerEvent event = buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check");
@@ -179,6 +216,75 @@ class IntelligenceEndToEndIntegrationTest {
         assertThat(savedDeliveries).hasSize(countAfterFirst);
     }
 
+    @Test
+    @Order(5)
+    void testWebhookFailureMarksDeliveryFailed() {
+        when(webhookDeliveryClient.deliver(any(), any(), any(), any(), any()))
+                .thenReturn(WebhookResult.failure(400, "Bad Request", 1));
+
+        IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "LOW", "CommunicationRequest", "action-overdue-check");
+        consumer.consume(event);
+
+        assertThat(countFailed()).isEqualTo(3);
+        assertThat(countDelivered()).isEqualTo(0);
+    }
+
+    @Test
+    @Order(6)
+    void testWebhookRetrySucceeds() {
+        when(webhookDeliveryClient.deliver(any(), any(), any(), any(), any()))
+                .thenReturn(WebhookResult.success(200, 3));
+
+        IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "LOW", "CommunicationRequest", "action-overdue-check");
+        consumer.consume(event);
+
+        assertThat(countDelivered()).isEqualTo(3);
+        IntelligenceDelivery d = getFirstDelivered();
+        assertThat(d.getAttemptCount()).isEqualTo(3);
+    }
+
+    @Test
+    @Order(7)
+    void testStepLevelRouting() {
+        IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "LOW", "CommunicationRequest", "action-overdue-check");
+        consumer.consume(event);
+
+        assertThat(countDelivered()).isEqualTo(3);
+        verify(subscriptionRepository).findRoutableSubscriptions(any(), eq("action-overdue-check"), eq("sms"));
+    }
+
+    @Test
+    @Order(8)
+    void testLateCompletionTrigger() {
+        IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "completed", "LOW", "CommunicationRequest", "action-overdue-check");
+        consumer.consume(event);
+
+        assertThat(countDelivered()).isEqualTo(3);
+    }
+
+    @Test
+    @Order(9)
+    void testFhirPayloadStructureValidation() {
+        IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "HIGH", "CommunicationRequest", "action-overdue-check");
+        consumer.consume(event);
+
+        JsonNode payload = getFirstDelivered().getFhirPayload();
+        assertThat(payload.get("resourceType").asText()).isEqualTo("CommunicationRequest");
+        assertThat(payload.has("identifier")).isTrue();
+        assertThat(payload.get("status").asText()).isEqualTo("active");
+        assertThat(payload.has("subject")).isTrue();
+        assertThat(payload.has("payload")).isTrue();
+        assertThat(payload.has("extension")).isTrue();
+
+        JsonNode extensions = payload.get("extension");
+        assertThat(extensions.isArray()).isTrue();
+        List<String> extUrls = new ArrayList<>();
+        extensions.forEach(ext -> extUrls.add(ext.get("url").asText()));
+        assertThat(extUrls).contains(
+                "http://openphc.org/fhir/StructureDefinition/cce-severity",
+                "http://openphc.org/fhir/StructureDefinition/cce-step-state"
+        );
+    }
 
     private ReceiverAdaptor buildAdaptor(UUID id, String name, String address) {
         ObjectNode definition = objectMapper.createObjectNode();
