@@ -9,18 +9,21 @@ import org.junit.jupiter.api.*;
 import org.openphc.cce.intelligence.domain.entity.ChannelSubscription;
 import org.openphc.cce.intelligence.domain.entity.IntelligenceDelivery;
 import org.openphc.cce.intelligence.domain.entity.ReceiverAdaptor;
+import org.openphc.cce.intelligence.domain.enums.ActionType;
 import org.openphc.cce.intelligence.domain.enums.IntelligenceDeliveryStatus;
+import org.openphc.cce.intelligence.domain.enums.IntelligenceSeverity;
 import org.openphc.cce.intelligence.domain.repository.ChannelSubscriptionRepository;
 import org.openphc.cce.intelligence.domain.repository.IntelligenceDeliveryAuditLogRepository;
 import org.openphc.cce.intelligence.domain.repository.IntelligenceDeliveryRepository;
 import org.openphc.cce.intelligence.domain.repository.ReceiverAdaptorRepository;
-import org.openphc.cce.intelligence.kafka.consumer.IntelligenceTriggerConsumer;
 import org.openphc.cce.intelligence.kafka.model.IntelligenceTriggerEvent;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
@@ -32,19 +35,20 @@ import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-@SpringBootTest(
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = {
-                "spring.kafka.bootstrap-servers=localhost:9092",
-                "spring.kafka.listener.auto-startup=false"
-        }
-)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
+@EmbeddedKafka(
+        partitions = 1,
+        topics = {"intelligence-triggers-test"},
+        brokerProperties = {"listeners=PLAINTEXT://localhost:0"}
+)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class IntelligenceEndToEndIntegrationTest {
 
@@ -71,7 +75,7 @@ class IntelligenceEndToEndIntegrationTest {
     }
 
     @Autowired
-    private IntelligenceTriggerConsumer consumer;
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -112,12 +116,15 @@ class IntelligenceEndToEndIntegrationTest {
         savedDeliveries.clear();
         String mockUrl = mockWebServer.url("/webhook").toString();
 
+        // Setup adaptors
         ReceiverAdaptor adaptor1 = buildAdaptor(ADAPTOR_ID_1, "Hospital EHR Adaptor", mockUrl);
         ReceiverAdaptor adaptor2 = buildAdaptor(ADAPTOR_ID_2, "Lab System Adaptor", mockUrl);
         ReceiverAdaptor adaptor3 = buildAdaptor(ADAPTOR_ID_3, "Notification Hub Adaptor", mockUrl);
 
+        // Step-specific subscription (overrides wildcard for adaptor1)
         ChannelSubscription stepSub = buildSubscription(
                 UUID.randomUUID(), PROTOCOL_DEF_ID, "action-overdue-check", "sms", ADAPTOR_ID_1, adaptor1);
+        // Wildcard subscriptions
         ChannelSubscription wildcardSub2 = buildSubscription(
                 UUID.randomUUID(), PROTOCOL_DEF_ID, null, "sms", ADAPTOR_ID_2, adaptor2);
         ChannelSubscription wildcardSub3 = buildSubscription(
@@ -125,14 +132,18 @@ class IntelligenceEndToEndIntegrationTest {
         ChannelSubscription wildcardSub1 = buildSubscription(
                 UUID.randomUUID(), PROTOCOL_DEF_ID, null, "sms", ADAPTOR_ID_1, adaptor1);
 
-        when(subscriptionRepository.findRoutableSubscriptions(eq(PROTOCOL_DEF_ID), eq("action-overdue-check"), eq("sms")))
+        // findRoutableSubscriptions returns step-specific + wildcards
+        when(subscriptionRepository.findRoutableSubscriptions(any(), any(), any()))
                 .thenReturn(List.of(stepSub, wildcardSub1, wildcardSub2, wildcardSub3));
 
+        // Idempotency check — default no duplicates
         when(deliveryRepository.existsByIntelligenceEventIdAndChannelSubscriptionId(any(), any()))
                 .thenReturn(false);
 
+        // findByIntelligenceEventId — returns empty list (no prior deliveries)
         when(deliveryRepository.findByIntelligenceEventId(any())).thenReturn(List.of());
 
+        // Save returns delivery with generated ID
         when(deliveryRepository.save(any(IntelligenceDelivery.class))).thenAnswer(invocation -> {
             IntelligenceDelivery d = invocation.getArgument(0);
             if (d.getId() == null) d.setId(UUID.randomUUID());
@@ -140,36 +151,48 @@ class IntelligenceEndToEndIntegrationTest {
             return d;
         });
 
+        // findById — return the latest saved version of the delivery
         when(deliveryRepository.findById(any(UUID.class))).thenAnswer(invocation -> {
             UUID id = invocation.getArgument(0);
+            // Return the most recent version with this ID
             return savedDeliveries.stream()
                     .filter(d -> id.equals(d.getId()))
-                    .reduce((first, second) -> second);
+                    .reduce((first, second) -> second)
+                    .map(Optional::of)
+                    .orElse(Optional.empty());
         });
 
+        // Audit log save
         when(auditLogRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     @Test
     @Order(1)
-    void testOverdueTriggerProducesDeliveries() {
-        enqueueSuccessResponses(4);
+    void testOverdueTriggerProducesDeliveries() throws Exception {
+        enqueueSuccessResponses(3);
 
         UUID eventId = UUID.randomUUID();
         IntelligenceTriggerEvent event = buildTriggerEvent(eventId, "overdue", "MEDIUM", "CommunicationRequest", "action-overdue-check");
 
-        consumer.consume(event);
+        kafkaTemplate.send("intelligence-triggers-test", event).get(5, TimeUnit.SECONDS);
 
-        List<IntelligenceDelivery> delivered = savedDeliveries.stream()
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            // 3 deliveries: step-specific for adaptor1, wildcard for adaptor2, wildcard for adaptor3
+            assertThat(savedDeliveries).hasSizeGreaterThanOrEqualTo(3 * 3); // 3 saves per delivery (create, update to executing, final)
+            List<IntelligenceDelivery> delivered = savedDeliveries.stream()
+                    .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
+                    .toList();
+            assertThat(delivered).hasSize(3);
+        });
+
+        // Validate FHIR payload is CommunicationRequest
+        IntelligenceDelivery delivery = savedDeliveries.stream()
                 .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
-                .toList();
-        assertThat(delivered).hasSize(4);
-
-        IntelligenceDelivery delivery = delivered.get(0);
+                .findFirst().orElseThrow();
         JsonNode payload = delivery.getFhirPayload();
         assertThat(payload.get("resourceType").asText()).isEqualTo("CommunicationRequest");
         assertThat(payload.get("status").asText()).isEqualTo("active");
-        assertThat(payload.get("priority").asText()).isEqualTo("urgent");
+        assertThat(payload.get("priority").asText()).isEqualTo("urgent"); // MEDIUM -> urgent
         assertThat(payload.has("subject")).isTrue();
         assertThat(payload.has("payload")).isTrue();
         assertThat(payload.has("extension")).isTrue();
@@ -177,66 +200,77 @@ class IntelligenceEndToEndIntegrationTest {
 
     @Test
     @Order(2)
-    void testEscalationCriticalPriority() {
-        enqueueSuccessResponses(4);
+    void testEscalationCriticalPriority() throws Exception {
+        enqueueSuccessResponses(3);
 
         UUID eventId = UUID.randomUUID();
         IntelligenceTriggerEvent event = buildTriggerEvent(eventId, "overdue", "CRITICAL", "CommunicationRequest", "action-overdue-check");
 
-        consumer.consume(event);
+        kafkaTemplate.send("intelligence-triggers-test", event).get(5, TimeUnit.SECONDS);
 
-        List<IntelligenceDelivery> delivered = savedDeliveries.stream()
-                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
-                .toList();
-        assertThat(delivered).isNotEmpty();
-        assertThat(delivered.get(0).getFhirPayload().get("priority").asText()).isEqualTo("asap");
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            List<IntelligenceDelivery> delivered = savedDeliveries.stream()
+                    .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
+                    .toList();
+            assertThat(delivered).isNotEmpty();
+            assertThat(delivered.get(0).getFhirPayload().get("priority").asText()).isEqualTo("asap");
+        });
     }
 
     @Test
     @Order(3)
-    void testCoordinationTriggerBuildsFhirTask() {
-        enqueueSuccessResponses(4);
+    void testCoordinationTriggerBuildsFhirTask() throws Exception {
+        enqueueSuccessResponses(3);
 
         UUID eventId = UUID.randomUUID();
         IntelligenceTriggerEvent event = buildTriggerEvent(eventId, "overdue", "HIGH", "Task", "action-overdue-check");
 
-        consumer.consume(event);
+        kafkaTemplate.send("intelligence-triggers-test", event).get(5, TimeUnit.SECONDS);
 
-        List<IntelligenceDelivery> delivered = savedDeliveries.stream()
-                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
-                .toList();
-        assertThat(delivered).isNotEmpty();
-        assertThat(delivered.get(0).getFhirPayload().get("resourceType").asText()).isEqualTo("Task");
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            List<IntelligenceDelivery> delivered = savedDeliveries.stream()
+                    .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
+                    .toList();
+            assertThat(delivered).isNotEmpty();
+            assertThat(delivered.get(0).getFhirPayload().get("resourceType").asText()).isEqualTo("Task");
+        });
     }
 
     @Test
     @Order(4)
-    void testDuplicateTriggerIdempotency() {
-        enqueueSuccessResponses(4);
-
+    void testDuplicateTriggerIdempotency() throws Exception {
+        // First call — allow through
         UUID eventId = UUID.randomUUID();
-        IntelligenceTriggerEvent event = buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check");
 
-        consumer.consume(event);
+        enqueueSuccessResponses(3);
+        kafkaTemplate.send("intelligence-triggers-test", buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check"))
+                .get(5, TimeUnit.SECONDS);
 
-        List<IntelligenceDelivery> delivered = savedDeliveries.stream()
-                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
-                .toList();
-        assertThat(delivered).hasSize(4);
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            List<IntelligenceDelivery> delivered = savedDeliveries.stream()
+                    .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
+                    .toList();
+            assertThat(delivered).hasSize(3);
+        });
 
         int countAfterFirst = savedDeliveries.size();
 
+        // Mark duplicates exist for second trigger
         when(deliveryRepository.existsByIntelligenceEventIdAndChannelSubscriptionId(eq(eventId), any()))
                 .thenReturn(true);
 
-        consumer.consume(event);
+        kafkaTemplate.send("intelligence-triggers-test", buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check"))
+                .get(5, TimeUnit.SECONDS);
+
+        // Wait briefly and verify no new saves
+        Thread.sleep(3000);
         assertThat(savedDeliveries).hasSize(countAfterFirst);
     }
 
     @Test
     @Order(5)
-    void testWebhook503RetrySuccess() {
-        mockWebServer.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
+    void testWebhook503RetrySuccess() throws Exception {
+        // 2 succeed, 1 gets 503 twice then 200
         mockWebServer.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
         mockWebServer.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
         mockWebServer.enqueue(new MockResponse().setResponseCode(503).setBody("Service Unavailable"));
@@ -244,13 +278,17 @@ class IntelligenceEndToEndIntegrationTest {
         mockWebServer.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
 
         UUID eventId = UUID.randomUUID();
-        consumer.consume(buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check"));
+        kafkaTemplate.send("intelligence-triggers-test", buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check"))
+                .get(5, TimeUnit.SECONDS);
 
-        List<IntelligenceDelivery> delivered = savedDeliveries.stream()
-                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
-                .toList();
-        assertThat(delivered).hasSize(4);
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted(() -> {
+            List<IntelligenceDelivery> delivered = savedDeliveries.stream()
+                    .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
+                    .toList();
+            assertThat(delivered).hasSize(3);
+        });
 
+        // Verify the retried one has attemptCount > 1
         IntelligenceDelivery retried = savedDeliveries.stream()
                 .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED && d.getAttemptCount() > 1)
                 .findFirst().orElse(null);
@@ -260,20 +298,23 @@ class IntelligenceEndToEndIntegrationTest {
 
     @Test
     @Order(6)
-    void testWebhook400NonRetryableFails() {
-        mockWebServer.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
+    void testWebhook400NonRetryableFails() throws Exception {
         mockWebServer.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
         mockWebServer.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
         mockWebServer.enqueue(new MockResponse().setResponseCode(400).setBody("Bad Request"));
 
         UUID eventId = UUID.randomUUID();
-        consumer.consume(buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check"));
+        kafkaTemplate.send("intelligence-triggers-test", buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check"))
+                .get(5, TimeUnit.SECONDS);
 
-        long delivered = savedDeliveries.stream().filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED).count();
-        long failed = savedDeliveries.stream().filter(d -> d.getStatus() == IntelligenceDeliveryStatus.FAILED).count();
-        assertThat(delivered).isEqualTo(3);
-        assertThat(failed).isEqualTo(1);
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            long delivered = savedDeliveries.stream().filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED).count();
+            long failed = savedDeliveries.stream().filter(d -> d.getStatus() == IntelligenceDeliveryStatus.FAILED).count();
+            assertThat(delivered).isEqualTo(2);
+            assertThat(failed).isEqualTo(1);
+        });
 
+        // Verify the failed one has attemptCount = 1 (no retries for 4xx)
         IntelligenceDelivery failedDelivery = savedDeliveries.stream()
                 .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.FAILED)
                 .findFirst().orElseThrow();
@@ -282,39 +323,51 @@ class IntelligenceEndToEndIntegrationTest {
 
     @Test
     @Order(7)
-    void testStepLevelRoutingOverridesWildcard() {
-        enqueueSuccessResponses(4);
+    void testStepLevelRoutingOverridesWildcard() throws Exception {
+        enqueueSuccessResponses(3);
 
         UUID eventId = UUID.randomUUID();
-        consumer.consume(buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check"));
+        kafkaTemplate.send("intelligence-triggers-test", buildTriggerEvent(eventId, "overdue", "LOW", "CommunicationRequest", "action-overdue-check"))
+                .get(5, TimeUnit.SECONDS);
 
-        List<IntelligenceDelivery> delivered = savedDeliveries.stream()
-                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
-                .toList();
-        assertThat(delivered).hasSize(4);
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            List<IntelligenceDelivery> delivered = savedDeliveries.stream()
+                    .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
+                    .toList();
+            // 3 deliveries: step-specific for adaptor1 (overrides wildcard), wildcard for adaptor2, wildcard for adaptor3
+            assertThat(delivered).hasSize(3);
+        });
     }
 
     @Test
     @Order(8)
-    void testLateCompletionTrigger() {
-        enqueueSuccessResponses(4);
+    void testLateCompletionTrigger() throws Exception {
+        enqueueSuccessResponses(3);
 
         UUID eventId = UUID.randomUUID();
-        consumer.consume(buildTriggerEvent(eventId, "completed", "LOW", "CommunicationRequest", "action-overdue-check"));
+        kafkaTemplate.send("intelligence-triggers-test", buildTriggerEvent(eventId, "completed", "LOW", "CommunicationRequest", "action-overdue-check"))
+                .get(5, TimeUnit.SECONDS);
 
-        List<IntelligenceDelivery> delivered = savedDeliveries.stream()
-                .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
-                .toList();
-        assertThat(delivered).hasSize(4);
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            List<IntelligenceDelivery> delivered = savedDeliveries.stream()
+                    .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
+                    .toList();
+            assertThat(delivered).hasSize(3);
+        });
     }
 
     @Test
     @Order(9)
-    void testFhirPayloadStructureValidation() {
-        enqueueSuccessResponses(4);
+    void testFhirPayloadStructureValidation() throws Exception {
+        enqueueSuccessResponses(3);
 
         UUID eventId = UUID.randomUUID();
-        consumer.consume(buildTriggerEvent(eventId, "overdue", "HIGH", "CommunicationRequest", "action-overdue-check"));
+        kafkaTemplate.send("intelligence-triggers-test", buildTriggerEvent(eventId, "overdue", "HIGH", "CommunicationRequest", "action-overdue-check"))
+                .get(5, TimeUnit.SECONDS);
+
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertThat(savedDeliveries.stream().filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED).count()).isGreaterThanOrEqualTo(1);
+        });
 
         IntelligenceDelivery delivery = savedDeliveries.stream()
                 .filter(d -> d.getStatus() == IntelligenceDeliveryStatus.DELIVERED)
@@ -325,13 +378,15 @@ class IntelligenceEndToEndIntegrationTest {
         assertThat(payload.has("identifier")).isTrue();
         assertThat(payload.get("identifier").isArray()).isTrue();
         assertThat(payload.get("status").asText()).isEqualTo("active");
-        assertThat(payload.get("priority").asText()).isEqualTo("urgent");
+        assertThat(payload.get("priority").asText()).isEqualTo("urgent"); // HIGH -> urgent
         assertThat(payload.has("category")).isTrue();
         assertThat(payload.has("subject")).isTrue();
+        assertThat(payload.get("subject").has("reference")).isTrue();
         assertThat(payload.has("payload")).isTrue();
         assertThat(payload.has("authoredOn")).isTrue();
         assertThat(payload.has("extension")).isTrue();
 
+        // Check extensions contain cce-severity, cce-step-state
         JsonNode extensions = payload.get("extension");
         assertThat(extensions.isArray()).isTrue();
         List<String> extUrls = new ArrayList<>();
