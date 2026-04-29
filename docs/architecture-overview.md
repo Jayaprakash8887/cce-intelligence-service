@@ -4,7 +4,7 @@
 
 The **CCE Intelligence Service** is the delivery engine of the CCE platform. It consumes **self-contained** intelligence trigger events published by the Compliance Service via Kafka, resolves routing via a many-to-many **channel subscription** model (with step-level granularity), builds FHIR-compliant payloads, and delivers actions to registered **Receiver Adaptors** via webhook.
 
-> All REST requests arrive via the **CCE Gateway Service**, which validates OAuth tokens and enforces scopes (`delivery-runs:read|write`, `channel-subscriptions:read|write`, `admin`). The Intelligence Service does not handle authentication or authorization.
+> All REST requests arrive via the **CCE Gateway Service**, which validates OAuth tokens and enforces scopes (`intelligence-deliveries:read|write`, `channel-subscriptions:read|write`, `admin`). The Intelligence Service does not handle authentication or authorization.
 
 ```mermaid
 graph TB
@@ -19,7 +19,7 @@ graph TB
         BUILDER["FHIR Payload Builder<br/>(CommunicationRequest / Task)"]
         ROUTER["Subscription Router<br/>(channel_subscription)"]
         DISPATCHER["Action Dispatcher<br/>(fan-out)"]
-        TRACKER["Delivery Run Tracker"]
+        TRACKER["Intelligence Delivery Tracker"]
         API["REST API<br/>(Spring MVC)"]
     end
 
@@ -62,7 +62,7 @@ graph TB
 
 ## 1.1 Compliance Service Contract
 
-The **CCE Compliance Service** (v1.1.0+) is the upstream publisher. When a step's status changes, the Compliance Service's `IntelligenceActionEvaluator` evaluates PlanDefinition intelligence actions, resolves all metadata (action type, severity, intelligence channel, protocol definition), creates `IntelligenceEvent` records, and publishes a **self-contained** `IntelligenceTriggerEvent` to `cce.intelligence.triggers`.
+The **CCE Compliance Service** (release-1.0.0+) is the upstream publisher. When a step's status changes, the Compliance Service's `IntelligenceActionEvaluator` evaluates PlanDefinition intelligence actions, resolves all metadata (action type, severity, intelligence channel, protocol definition), creates `IntelligenceEventLog` records (`published=false` → `true`), and publishes a **self-contained** `IntelligenceTriggerEvent` to `cce.intelligence.triggers`.
 
 ```mermaid
 sequenceDiagram
@@ -88,12 +88,12 @@ sequenceDiagram
 |---|---|---|
 | **Intelligence action evaluation** | Compliance Service | Evaluates PlanDefinition conditions, resolves all metadata, publishes self-contained triggers to Kafka |
 | **`action_definition` table** | Compliance Service | FHIR ActivityDefinition resources — **not accessed** by Intelligence Service at runtime |
-| **`intelligence_event_log` table** | Compliance Service | Tracks intelligence action execution and evaluation context. `intelligence_event_log.id` maps to `intelligenceEventId` in the trigger event — stored in `delivery_run` for traceability only |
+| **`intelligence_event_log` table** | Compliance Service | Tracks intelligence action execution and evaluation context. `intelligence_event_log.id` maps to `intelligenceEventId` in the trigger event — stored in `intelligence_delivery` for traceability only |
 | **Trigger consumption & routing** | Intelligence Service | Consumes self-contained triggers, resolves channel subscriptions (with step-level routing), fan-out delivery |
 | **`receiver_adaptor` table** | Intelligence Service | Registered webhook endpoints (FHIR Endpoint resource in `definition` column) |
 | **`channel_subscription` table** | Intelligence Service | Many-to-many routing map (protocol × action_id × channel → adaptors) |
-| **`delivery_run` table** | Intelligence Service | Delivery lifecycle per (intelligence_event × adaptor); `intelligence_event_id` stored for traceability (maps to `intelligence_event_log.id`, not a runtime FK) |
-| **`delivery_audit_log` table** | Intelligence Service | Audit trail for delivery operations |
+| **`intelligence_delivery` table** | Intelligence Service | Delivery lifecycle per (intelligence_event × adaptor); `intelligence_event_id` stored for traceability (maps to `intelligence_event_log.id`, not a runtime FK) |
+| **`intelligence_delivery_audit_log` table** | Intelligence Service | Audit trail for delivery operations |
 
 > **Key invariant:** The Compliance Service evaluates *when* to act, *what* action to take, and publishes a self-contained trigger event with all resolved metadata. The Intelligence Service decides *where* to deliver it (step-level routing via channel subscriptions) and *how* (FHIR payload + webhook to receiver adaptors). This separation allows routing to evolve independently of clinical logic, and the fat event design eliminates all cross-service runtime dependencies.
 
@@ -163,19 +163,19 @@ src/main/java/org/openphc/cce/intelligence/
 │   └── ObservabilityConfig.java                   # Custom metrics
 ├── domain/
 │   ├── entity/
-│   │   ├── DeliveryRun.java                       # Delivery lifecycle per (intelligence_event × adaptor)
+│   │   ├── IntelligenceDelivery.java                       # Delivery lifecycle per (intelligence_event × adaptor)
 │   │   ├── ReceiverAdaptor.java                   # Registered webhook endpoint
 │   │   ├── ChannelSubscription.java               # Many-to-many routing map (with step-level action_id)
-│   │   └── DeliveryAuditLog.java                  # Audit trail entry
+│   │   └── IntelligenceDeliveryAuditLog.java                  # Audit trail entry
 │   ├── enums/
-│   │   ├── DeliveryRunStatus.java                 # PENDING, EXECUTING, DELIVERED, FAILED, CANCELLED
+│   │   ├── IntelligenceDeliveryStatus.java                 # PENDING, EXECUTING, DELIVERED, FAILED, CANCELLED
 │   │   ├── ActionType.java                        # NOTIFICATION, ESCALATION, COORDINATION
 │   │   └── IntelligenceSeverity.java              # LOW, MEDIUM, HIGH, CRITICAL
 │   └── repository/
-│       ├── DeliveryRunRepository.java
+│       ├── IntelligenceDeliveryRepository.java
 │       ├── ReceiverAdaptorRepository.java
 │       ├── ChannelSubscriptionRepository.java
-│       └── DeliveryAuditLogRepository.java
+│       └── IntelligenceDeliveryAuditLogRepository.java
 ├── engine/
 │   ├── IntelligenceEngine.java                    # Core orchestrator — trigger → build payload → route → deliver
 │   ├── FhirPayloadBuilder.java                    # Builds FHIR CommunicationRequest or Task from trigger event
@@ -188,19 +188,19 @@ src/main/java/org/openphc/cce/intelligence/
 │   └── model/
 │       └── IntelligenceTriggerEvent.java          # Inbound Kafka message record
 ├── service/
-│   ├── DeliveryRunService.java                    # Delivery run lifecycle management
+│   ├── IntelligenceDeliveryService.java                    # Intelligence delivery lifecycle management
 │   ├── ReceiverAdaptorService.java                # Adaptor registration and lookup
 │   ├── ChannelSubscriptionService.java            # Subscription management
-│   └── DeliveryAuditService.java                  # @Async audit logging
+│   └── IntelligenceDeliveryAuditService.java                  # @Async audit logging
 ├── webhook/
 │   └── WebhookDeliveryClient.java                 # WebClient-based HTTP POST to adaptor endpoint
 └── web/
     ├── controller/
-    │   ├── DeliveryRunController.java
+    │   ├── IntelligenceDeliveryController.java
     │   ├── ReceiverAdaptorController.java
     │   └── ChannelSubscriptionController.java
     ├── dto/
-    │   ├── DeliveryRunDto.java
+    │   ├── IntelligenceDeliveryDto.java
     │   ├── ReceiverAdaptorDto.java
     │   ├── ChannelSubscriptionDto.java
     │   └── DtoMapper.java
@@ -237,14 +237,14 @@ flowchart TD
     S3{"Step 3: Fan-Out Delivery<br/>For each subscribed adaptor:"}
     S3 --> S4
 
-    S4["Create DeliveryRun — PENDING<br/>→ Build FHIR Payload<br/>→ Dispatch Webhook<br/>→ Track Outcome"]
+    S4["Create IntelligenceDelivery — PENDING<br/>→ Build FHIR Payload<br/>→ Dispatch Webhook<br/>→ Track Outcome"]
     S4 --> S5
 
     S5{"Delivery Result"}
-    S5 -->|"Success"| DELIVERED["DeliveryRun → DELIVERED"]
+    S5 -->|"Success"| DELIVERED["IntelligenceDelivery → DELIVERED"]
     S5 -->|"Failure"| RETRY{"Retries remaining?"}
     RETRY -->|"Yes"| S4
-    RETRY -->|"No"| FAILED["DeliveryRun → FAILED"]
+    RETRY -->|"No"| FAILED["IntelligenceDelivery → FAILED"]
 ```
 
 ### 4.1 Data Flow: Trigger Event → FHIR Payload
@@ -262,8 +262,8 @@ IntelligenceTriggerEvent
   ├── protocolCanonical ────► FHIR about[0].reference
   ├── stepState ────────────► FHIR extension (cce-step-state)
   ├── detectedAt ───────────► FHIR authoredOn
-  ├── intelligenceEventId ───────► delivery_run.intelligence_event_id (traceability)
-  └── actionDefinitionId ──► delivery_run.action_definition_id (traceability)
+  ├── intelligenceEventId ───────► intelligence_delivery.intelligence_event_id (traceability)
+  └── actionDefinitionId ──► intelligence_delivery.action_definition_id (traceability)
 ```
 
 ### 4.2 FHIR Payload Generation
@@ -281,7 +281,7 @@ The trigger event's `actionType` carries the FHIR `ActivityDefinition.kind` valu
 | `Task` | any | `COORDINATION` | `Task` |
 | `ServiceRequest` | any | `COORDINATION` | `Task` |
 
-The mapped `ActionType` is stored in `delivery_run.action_type` and used in the FHIR payload's `category` / `code` coding, the `contentString` summary, and the REST API response.
+The mapped `ActionType` is stored in `intelligence_delivery.action_type` and used in the FHIR payload's `category` / `code` coding, the `contentString` summary, and the REST API response.
 
 #### Payload Resource Types
 
@@ -297,7 +297,7 @@ The mapped `ActionType` is stored in `delivery_run.action_type` and used in the 
 {
   "resourceType": "CommunicationRequest",
   "identifier": [{
-    "system": "http://openphc.org/fhir/delivery-run-id",
+    "system": "http://openphc.org/fhir/intelligence-delivery-id",
     "value": "aaaa-bbbb-cccc-dddd"
   }],
   "status": "active",
@@ -344,7 +344,7 @@ The mapped `ActionType` is stored in `delivery_run.action_type` and used in the 
 {
   "resourceType": "Task",
   "identifier": [{
-    "system": "http://openphc.org/fhir/delivery-run-id",
+    "system": "http://openphc.org/fhir/intelligence-delivery-id",
     "value": "aaaa-bbbb-cccc-dddd"
   }],
   "status": "requested",
@@ -383,7 +383,7 @@ The mapped `ActionType` is stored in `delivery_run.action_type` and used in the 
 
 | FHIR Field | CommunicationRequest | Task | Source |
 |---|---|---|---|
-| `identifier` | Delivery run ID | Delivery run ID | `delivery_run.id` |
+| `identifier` | Intelligence delivery ID | Intelligence delivery ID | `intelligence_delivery.id` |
 | `status` | `active` | `requested` | Fixed per resource type |
 | `priority` | Mapped from severity | Mapped from severity | `trigger.severity` |
 | `category` / `code` | Action type coding | Action type coding | `trigger.actionType` |
@@ -420,7 +420,7 @@ The Intelligence Service uses a **channel subscription** model that maps `(proto
 erDiagram
     PROTOCOL_DEFINITION ||--o{ CHANNEL_SUBSCRIPTION : "scopes"
     RECEIVER_ADAPTOR ||--o{ CHANNEL_SUBSCRIPTION : "subscribes"
-    CHANNEL_SUBSCRIPTION ||--o{ DELIVERY_RUN : "routes to"
+    CHANNEL_SUBSCRIPTION ||--o{ INTELLIGENCE_DELIVERY : "routes to"
 
     PROTOCOL_DEFINITION {
         uuid id PK
@@ -443,7 +443,7 @@ erDiagram
         jsonb definition
     }
 
-    DELIVERY_RUN {
+    INTELLIGENCE_DELIVERY {
         uuid id PK
         uuid intelligence_event_id
         uuid channel_subscription_id FK
@@ -458,10 +458,10 @@ flowchart TD
     ACTION["Intelligence Action Fires<br/>channel = 'supervisor', actionId = 'anc-visit-2'"] --> LOOKUP["Query channel_subscription<br/>WHERE protocol_definition_id = :pdId<br/>AND channel = 'supervisor'<br/>AND action_id = 'anc-visit-2' OR action_id IS NULL<br/>AND status = 'ACTIVE'<br/>ORDER BY action_id NULLS LAST"]
     LOOKUP --> DEDUP["Deduplicate: step-specific<br/>subscriptions override wildcards"]
     DEDUP --> RESULT{"Subscriptions found?"}
-    RESULT -->|"None"| FAIL["DeliveryRun → FAILED<br/>'No active subscription'"]
-    RESULT -->|"1+ found"| FANOUT["Fan-out: create one DeliveryRun<br/>per subscribed adaptor"]
-    FANOUT --> D1["DeliveryRun #1<br/>→ CHW Team Lead SMS"]
-    FANOUT --> D2["DeliveryRun #2<br/>→ Dashboard Adaptor"]
+    RESULT -->|"None"| FAIL["IntelligenceDelivery → FAILED<br/>'No active subscription'"]
+    RESULT -->|"1+ found"| FANOUT["Fan-out: create one IntelligenceDelivery<br/>per subscribed adaptor"]
+    FANOUT --> D1["IntelligenceDelivery #1<br/>→ CHW Team Lead SMS"]
+    FANOUT --> D2["IntelligenceDelivery #2<br/>→ Dashboard Adaptor"]
 ```
 
 ### 5.3 Example: Step-Level Channel Subscriptions
@@ -482,7 +482,7 @@ flowchart TD
 
 ## 6. State Machines
 
-### 6.1 Delivery Run
+### 6.1 Intelligence Delivery
 
 ```mermaid
 stateDiagram-v2
@@ -510,9 +510,9 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 
 ### 6.2 Idempotency
 
-- **Per-intelligence_event:** `(intelligence_event_id, channel_subscription_id)` unique constraint on `delivery_run` prevents duplicate processing for the same intelligence event + adaptor combination.
-- **Cross-trigger:** If the Compliance Service publishes duplicate trigger events for the same `intelligence_event_log` record, the Intelligence Service's idempotency guard ensures each adaptor gets exactly one `delivery_run`.
-- **Per-adaptor:** Within a single intelligence event's fan-out, each subscribed adaptor gets exactly one `delivery_run`.
+- **Per-intelligence_event:** `(intelligence_event_id, channel_subscription_id)` unique constraint on `intelligence_delivery` prevents duplicate processing for the same intelligence event + adaptor combination.
+- **Cross-trigger:** If the Compliance Service publishes duplicate trigger events for the same `intelligence_event_log` record, the Intelligence Service's idempotency guard ensures each adaptor gets exactly one `intelligence_delivery`.
+- **Per-adaptor:** Within a single intelligence event's fan-out, each subscribed adaptor gets exactly one `intelligence_delivery`.
 
 ---
 
@@ -543,7 +543,7 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 ### 8.2 Logging & Tracing
 
 - **Format:** `timestamp [thread] [correlationId] level logger - message`
-- **MDC fields:** `correlationId`, `intelligenceEventId`, `deliveryRunId`, `subject`, `protocolCanonical`
+- **MDC fields:** `correlationId`, `intelligenceEventId`, `intelligenceDeliveryId`, `subject`, `protocolCanonical`
 - **Tracing:** OpenTelemetry (OTLP), correlation propagated via trigger event metadata
 - **Health:** `/actuator/health` (liveness + readiness), `/actuator/prometheus`
 
@@ -584,5 +584,5 @@ Terminal states: `DELIVERED`, `CANCELLED`.
 | **Database** | Connection pool per instance (10 max) |
 | **Kafka** | 3 concurrent listener threads per instance |
 | **API** | Stateless — any instance serves any request |
-| **Fan-out** | Delivery runs are created per-adaptor; concurrent webhook calls via WebClient's non-blocking I/O |
-| **Data retention** | `delivery_run` and `delivery_audit_log` are high-growth tables. Partition by `created_at` using `pg_partman` or native PostgreSQL range partitioning. Archive partitions older than the configured retention period (default: 90 days) to cold storage. Regulatory retention requirements may extend this — consult compliance policy |
+| **Fan-out** | Intelligence deliveries are created per-adaptor; concurrent webhook calls via WebClient's non-blocking I/O |
+| **Data retention** | `intelligence_delivery` and `intelligence_delivery_audit_log` are high-growth tables. Partition by `created_at` using `pg_partman` or native PostgreSQL range partitioning. Archive partitions older than the configured retention period (default: 90 days) to cold storage. Regulatory retention requirements may extend this — consult compliance policy |

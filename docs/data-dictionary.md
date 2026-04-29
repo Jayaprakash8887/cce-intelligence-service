@@ -12,8 +12,8 @@
 2. [Table Summary](#2-table-summary)
 3. [receiver_adaptor](#3-receiver_adaptor) (owned)
 4. [channel_subscription](#4-channel_subscription) (owned)
-5. [delivery_run](#5-delivery_run) (owned)
-6. [delivery_audit_log](#6-delivery_audit_log) (owned)
+5. [intelligence_delivery](#5-intelligence_delivery) (owned)
+6. [intelligence_delivery_audit_log](#6-intelligence_delivery_audit_log) (owned)
 7. [Compliance Service Tables](#7-compliance-service-tables--not-accessed-at-runtime)
 8. [Enumerated Value Reference](#8-enumerated-value-reference)
 9. [JSONB Column Schemas](#9-jsonb-column-schemas)
@@ -28,8 +28,8 @@
 erDiagram
     PROTOCOL_DEFINITION ||--o{ CHANNEL_SUBSCRIPTION : "scopes"
     RECEIVER_ADAPTOR ||--o{ CHANNEL_SUBSCRIPTION : "subscribes via"
-    CHANNEL_SUBSCRIPTION ||--o{ DELIVERY_RUN : "routes to"
-    DELIVERY_RUN ||--o{ DELIVERY_AUDIT_LOG : "audited by"
+    CHANNEL_SUBSCRIPTION ||--o{ INTELLIGENCE_DELIVERY : "routes to"
+    INTELLIGENCE_DELIVERY ||--o{ INTELLIGENCE_DELIVERY_AUDIT_LOG : "audited by"
 
     RECEIVER_ADAPTOR {
         uuid id PK
@@ -52,7 +52,7 @@ erDiagram
         timestamptz updated_at
     }
 
-    DELIVERY_RUN {
+    INTELLIGENCE_DELIVERY {
         uuid id PK
         uuid intelligence_event_id
         uuid action_definition_id
@@ -72,9 +72,9 @@ erDiagram
         timestamptz delivered_at
     }
 
-    DELIVERY_AUDIT_LOG {
+    INTELLIGENCE_DELIVERY_AUDIT_LOG {
         uuid id PK
-        uuid delivery_run_id FK
+        uuid intelligence_delivery_id FK
         varchar event_type
         varchar actor
         jsonb details
@@ -82,7 +82,7 @@ erDiagram
     }
 ```
 
-> **No read-only tables on the hot path.** The trigger event is self-contained (fat event) — the Intelligence Service does **not** read any Compliance Service tables (`intelligence_event_log`, `action_definition`, etc.) during trigger processing. The `intelligence_event_id` and `action_definition_id` columns on `delivery_run` are populated from the trigger event for traceability, not as runtime FKs. The `channel_subscription.protocol_definition_id` FK references `protocol_definition` for referential integrity; `protocol_definition` may be joined in low-frequency **admin REST queries** (e.g., to display `protocolCanonical` in channel subscription DTOs) but is never accessed on the trigger processing path.
+> **No read-only tables on the hot path.** The trigger event is self-contained (fat event) — the Intelligence Service does **not** read any Compliance Service tables (`intelligence_event_log`, `action_definition`, etc.) during trigger processing. The `intelligence_event_id` and `action_definition_id` columns on `intelligence_delivery` are populated from the trigger event for traceability, not as runtime FKs. The `channel_subscription.protocol_definition_id` FK references `protocol_definition` for referential integrity; `protocol_definition` may be joined in low-frequency **admin REST queries** (e.g., to display `protocolCanonical` in channel subscription DTOs) but is never accessed on the trigger processing path.
 
 ---
 
@@ -92,8 +92,8 @@ erDiagram
 |---|-------|-------|---------|-----------|
 | 1 | `receiver_adaptor` | Intelligence Service | Registered webhook endpoints for action delivery | Low (handful) |
 | 2 | `channel_subscription` | Intelligence Service | Many-to-many routing map: (protocol, action_id, channel) → adaptor | Low–Medium |
-| 3 | `delivery_run` | Intelligence Service | Delivery lifecycle per (intelligence_event × adaptor) | High (per intelligence_event × adaptor) |
-| 4 | `delivery_audit_log` | Intelligence Service | Audit trail for delivery lifecycle events | High |
+| 3 | `intelligence_delivery` | Intelligence Service | Delivery lifecycle per (intelligence_event × adaptor) | High (per intelligence_event × adaptor) |
+| 4 | `intelligence_delivery_audit_log` | Intelligence Service | Audit trail for delivery lifecycle events | High |
 
 > The Intelligence Service owns all 4 tables. It does **not** read any Compliance Service tables at runtime — the trigger event carries all necessary metadata (fat event design).
 
@@ -187,9 +187,9 @@ ORDER BY cs.action_id NULLS LAST
 
 ---
 
-## 5. delivery_run
+## 5. intelligence_delivery
 
-Tracks the **delivery lifecycle** of an intelligence action to a specific Receiver Adaptor. One row per `(intelligence_event, channel_subscription)` combination. The `(intelligence_event_id, channel_subscription_id)` compound key enforces idempotency — if duplicate trigger events arrive for the same intelligence event, only the first creates delivery runs. All metadata columns (`action_type`, `severity`, `channel`, `action_id`, etc.) are populated directly from the trigger event — no Compliance table reads required.
+Tracks the **delivery lifecycle** of an intelligence action to a specific Receiver Adaptor. One row per `(intelligence_event, channel_subscription)` combination. The `(intelligence_event_id, channel_subscription_id)` compound key enforces idempotency — if duplicate trigger events arrive for the same intelligence event, only the first creates intelligence deliveries. All metadata columns (`action_type`, `severity`, `channel`, `action_id`, etc.) are populated directly from the trigger event — no Compliance table reads required.
 
 ### Columns
 
@@ -200,16 +200,16 @@ Tracks the **delivery lifecycle** of an intelligence action to a specific Receiv
 | `action_definition_id` | `UUID` | **NOT NULL** | — | Compliance Service's `action_definition.id`. Stored for traceability, not used as a runtime FK. |
 | `channel_subscription_id` | `UUID` | Yes | — | FK → `channel_subscription.id`. Which subscription routed this delivery. `NULL` if no matching subscription found. |
 | `action_type` | `VARCHAR` | **NOT NULL** | — | Intelligence Service action type: `NOTIFICATION`, `ESCALATION`, or `COORDINATION`. Mapped at consumption time from the trigger event's `actionType` (FHIR `ActivityDefinition.kind`): `CommunicationRequest` + HIGH/CRITICAL → ESCALATION, `CommunicationRequest` + LOW/MEDIUM → NOTIFICATION, `Task`/`ServiceRequest` → COORDINATION. Determines FHIR payload resource type. |
-| `status` | `VARCHAR` | **NOT NULL** | — | Delivery status. See [DeliveryRunStatus](#deliveryrunstatus). |
+| `status` | `VARCHAR` | **NOT NULL** | — | Delivery status. See [IntelligenceDeliveryStatus](#intelligencedeliverystatus). |
 | `subject` | `VARCHAR` | **NOT NULL** | — | Patient UPID. From trigger event `subject`. |
 | `protocol_canonical` | `VARCHAR` | **NOT NULL** | — | Protocol `url\|version`. From trigger event `protocolCanonical`. |
 | `action_id` | `VARCHAR` | **NOT NULL** | — | PlanDefinition action ID (e.g., `anc-visit-2`). From trigger event `actionId`. |
 | `severity` | `VARCHAR` | **NOT NULL** | — | Intelligence severity. From trigger event `severity`. See [IntelligenceSeverity](#intelligenceseverity). |
 | `channel` | `VARCHAR` | **NOT NULL** | — | Routing channel name (e.g., `supervisor`). From trigger event `intelligenceChannel`. |
-| `fhir_payload` | `JSONB` | **NOT NULL** | — | The FHIR R4 resource (CommunicationRequest or Task) sent to the adaptor. See [JSONB: fhir_payload](#delivery_run--fhir_payload). |
-| `delivery_result` | `JSONB` | Yes | — | Delivery response details (HTTP status, error message, attempts). See [JSONB: delivery_result](#delivery_run--delivery_result). |
+| `fhir_payload` | `JSONB` | **NOT NULL** | — | The FHIR R4 resource (CommunicationRequest or Task) sent to the adaptor. See [JSONB: fhir_payload](#intelligence_delivery--fhir_payload). |
+| `delivery_result` | `JSONB` | Yes | — | Delivery response details (HTTP status, error message, attempts). See [JSONB: delivery_result](#intelligence_delivery--delivery_result). |
 | `attempt_count` | `INTEGER` | **NOT NULL** | `0` | Number of delivery attempts made. |
-| `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | When the delivery run was created. |
+| `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | When the intelligence delivery was created. |
 | `updated_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Last status change. |
 | `delivered_at` | `TIMESTAMPTZ` | Yes | — | When the action was successfully delivered. `NULL` if not yet delivered. |
 
@@ -217,20 +217,20 @@ Tracks the **delivery lifecycle** of an intelligence action to a specific Receiv
 
 | Type | Name | Details |
 |------|------|---------|
-| Primary Key | `delivery_run_pkey` | `id` |
-| Foreign Key | `delivery_run_channel_subscription_id_fkey` | `channel_subscription_id` → `channel_subscription(id)` |
-| Unique | `delivery_run_intel_event_subscription_key` | `(intelligence_event_id, channel_subscription_id)` — Idempotency guard. One delivery per intelligence event per subscription. **Note:** PostgreSQL treats NULLs as distinct in unique constraints, so multiple rows with `channel_subscription_id = NULL` for the same `intelligence_event_id` will not conflict. This is the correct behavior — failed delivery runs without a matching subscription are edge cases and don't need deduplication. |
+| Primary Key | `intelligence_delivery_pkey` | `id` |
+| Foreign Key | `intelligence_delivery_channel_subscription_id_fkey` | `channel_subscription_id` → `channel_subscription(id)` |
+| Unique | `intelligence_delivery_intel_event_subscription_key` | `(intelligence_event_id, channel_subscription_id)` — Idempotency guard. One delivery per intelligence event per subscription. **Note:** PostgreSQL treats NULLs as distinct in unique constraints, so multiple rows with `channel_subscription_id = NULL` for the same `intelligence_event_id` will not conflict. This is the correct behavior — failed intelligence deliveries without a matching subscription are edge cases and don't need deduplication. |
 | Check | — | `action_type IN ('NOTIFICATION', 'ESCALATION', 'COORDINATION')` |
 | Check | — | `status IN ('PENDING', 'EXECUTING', 'DELIVERED', 'FAILED', 'CANCELLED')` |
 | Check | — | `severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')` |
-| B-tree Index | `idx_delivery_run_intelligence_event` | `intelligence_event_id` — Lookup all deliveries for an intelligence event. |
-| B-tree Index | `idx_delivery_run_status` | `status` — Filter by delivery status. |
-| B-tree Index | `idx_delivery_run_subject` | `subject` — Patient-centric queries. |
-| Partial B-tree | `idx_delivery_run_failed` | `status WHERE status = 'FAILED'` — Quick failed run queries. |
+| B-tree Index | `idx_intelligence_delivery_intelligence_event` | `intelligence_event_id` — Lookup all deliveries for an intelligence event. |
+| B-tree Index | `idx_intelligence_delivery_status` | `status` — Filter by delivery status. |
+| B-tree Index | `idx_intelligence_delivery_subject` | `subject` — Patient-centric queries. |
+| Partial B-tree | `idx_intelligence_delivery_failed` | `status WHERE status = 'FAILED'` — Quick failed run queries. |
 
 ---
 
-## 6. delivery_audit_log
+## 6. intelligence_delivery_audit_log
 
 Audit trail for delivery lifecycle events. Written asynchronously (`@Async`) to avoid blocking the main processing pipeline.
 
@@ -239,7 +239,7 @@ Audit trail for delivery lifecycle events. Written asynchronously (`@Async`) to 
 | Column | Data Type | Nullable | Default | Description |
 |--------|-----------|----------|---------|-------------|
 | `id` | `UUID` | **NOT NULL** | `gen_random_uuid()` | Primary key. |
-| `delivery_run_id` | `UUID` | **NOT NULL** | — | FK → `delivery_run.id`. |
+| `intelligence_delivery_id` | `UUID` | **NOT NULL** | — | FK → `intelligence_delivery.id`. |
 | `event_type` | `VARCHAR` | **NOT NULL** | — | Lifecycle event: `CREATED`, `DISPATCHED`, `DELIVERED`, `FAILED`, `CANCELLED`, `RETRIED`. |
 | `actor` | `VARCHAR` | **NOT NULL** | `'system'` | Who/what caused the event (`system` for automated, user ID for manual). |
 | `details` | `JSONB` | Yes | — | Event-specific details (HTTP status, error message, adaptor info). |
@@ -249,10 +249,10 @@ Audit trail for delivery lifecycle events. Written asynchronously (`@Async`) to 
 
 | Type | Name | Details |
 |------|------|---------|
-| Primary Key | `delivery_audit_log_pkey` | `id` |
-| Foreign Key | `delivery_audit_log_delivery_run_id_fkey` | `delivery_run_id` → `delivery_run(id)` |
-| B-tree Index | `idx_delivery_audit_log_run` | `delivery_run_id` — All audit entries for a run. |
-| B-tree Index | `idx_delivery_audit_log_timestamp` | `timestamp` — Time-range queries. |
+| Primary Key | `intelligence_delivery_audit_log_pkey` | `id` |
+| Foreign Key | `intelligence_delivery_audit_log_intelligence_delivery_id_fkey` | `intelligence_delivery_id` → `intelligence_delivery(id)` |
+| B-tree Index | `idx_intelligence_delivery_audit_log_run` | `intelligence_delivery_id` — All audit entries for a run. |
+| B-tree Index | `idx_intelligence_delivery_audit_log_timestamp` | `timestamp` — Time-range queries. |
 
 ---
 
@@ -260,7 +260,7 @@ Audit trail for delivery lifecycle events. Written asynchronously (`@Async`) to 
 
 With the **fat event design**, the Intelligence Service does not read any Compliance Service tables during trigger processing. All metadata needed for routing and FHIR payload construction (`actionType`, `severity`, `intelligenceChannel`, `protocolDefinitionId`, `actionDefinitionId`) is carried in the `IntelligenceTriggerEvent` published by the Compliance Service via Kafka.
 
-The `intelligence_event_id` and `action_definition_id` columns on `delivery_run` are stored for **traceability and cross-service correlation** only — they enable diagnostic joins in data warehouses or ad-hoc queries but are not used as runtime foreign keys.
+The `intelligence_event_id` and `action_definition_id` columns on `intelligence_delivery` are stored for **traceability and cross-service correlation** only — they enable diagnostic joins in data warehouses or ad-hoc queries but are not used as runtime foreign keys.
 
 ### Previously Accessed Tables (No Longer Read)
 
@@ -279,11 +279,11 @@ The `intelligence_event_id` and `action_definition_id` columns on `delivery_run`
 
 ## 8. Enumerated Value Reference
 
-### DeliveryRunStatus
+### IntelligenceDeliveryStatus
 
 | Value | Description |
 |-------|-------------|
-| `PENDING` | Delivery run created, not yet dispatched |
+| `PENDING` | Intelligence delivery created, not yet dispatched |
 | `EXECUTING` | Dispatch in progress (webhook call active) |
 | `DELIVERED` | Successfully delivered to Receiver Adaptor |
 | `FAILED` | Delivery failed after all retry attempts |
@@ -406,11 +406,11 @@ A **FHIR R4 Endpoint** resource describing the adaptor's identity, connection ty
 
 > **Platform headers (always sent):** In addition to `config.customHeaders` and `config.authHeader`, the `WebhookDeliveryClient` always injects these platform headers on every webhook POST:
 > - `Content-Type: application/fhir+json`
-> - `X-CCE-Delivery-Run-Id: {deliveryRunId}` — Unique delivery run identifier for correlation.
+> - `X-CCE-Intelligence-Delivery-Id: {intelligenceDeliveryId}` — Unique intelligence delivery identifier for correlation.
 > - `X-CCE-Intelligence-Event-Id: {intelligenceEventId}` — Compliance Service intelligence event ID for cross-service tracing.
 > - `X-CCE-Signature-256: {hmac}` — HMAC-SHA256 signature (only if `webhookSecret` is configured).
 
-### `delivery_run` → `fhir_payload`
+### `intelligence_delivery` → `fhir_payload`
 
 The FHIR R4-compliant resource sent to the Receiver Adaptor. Resource type depends on the trigger event's `actionType`:
 - `NOTIFICATION` / `ESCALATION` → `CommunicationRequest`
@@ -420,7 +420,7 @@ The FHIR R4-compliant resource sent to the Receiver Adaptor. Resource type depen
 {
   "resourceType": "CommunicationRequest",
   "identifier": [{
-    "system": "http://openphc.org/fhir/delivery-run-id",
+    "system": "http://openphc.org/fhir/intelligence-delivery-id",
     "value": "aaaa-bbbb-cccc-dddd"
   }],
   "status": "active",
@@ -452,7 +452,7 @@ The FHIR R4-compliant resource sent to the Receiver Adaptor. Resource type depen
 }
 ```
 
-### `delivery_run` → `delivery_result`
+### `intelligence_delivery` → `delivery_result`
 
 ```json
 {
@@ -466,7 +466,7 @@ The FHIR R4-compliant resource sent to the Receiver Adaptor. Resource type depen
 }
 ```
 
-### `delivery_audit_log` → `details`
+### `intelligence_delivery_audit_log` → `details`
 
 Content varies by event type:
 
@@ -506,11 +506,11 @@ Content varies by event type:
 
 ## 12. Data Retention
 
-`delivery_run` and `delivery_audit_log` are high-growth tables (one row per intelligence event × adaptor, plus audit entries per lifecycle event). Without a retention strategy, these tables will grow unbounded.
+`intelligence_delivery` and `intelligence_delivery_audit_log` are high-growth tables (one row per intelligence event × adaptor, plus audit entries per lifecycle event). Without a retention strategy, these tables will grow unbounded.
 
 | Strategy | Table | Details |
 |---|---|---|
-| **Range partitioning** | `delivery_run`, `delivery_audit_log` | Partition by `created_at` / `timestamp` using native PostgreSQL range partitioning or `pg_partman` for automated partition management. Monthly partitions recommended. |
+| **Range partitioning** | `intelligence_delivery`, `intelligence_delivery_audit_log` | Partition by `created_at` / `timestamp` using native PostgreSQL range partitioning or `pg_partman` for automated partition management. Monthly partitions recommended. |
 | **Active retention** | Both | Keep the most recent 90 days in active partitions for operational queries. |
 | **Archive** | Both | Detach and move partitions older than the retention window to cold storage (S3, Azure Blob). Retain for regulatory compliance period (consult healthcare data retention policy). |
 | **Indexes** | Both | Partial indexes on `status` (e.g., `WHERE status = 'FAILED'`) ensure fast queries on active data without scanning archived partitions. |

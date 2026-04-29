@@ -11,7 +11,7 @@
 2. [Trigger Processing Sequence](#2-trigger-processing-sequence)
 3. [Channel Subscription Routing](#3-channel-subscription-routing)
 4. [Action Dispatch & Webhook Delivery](#4-action-dispatch--webhook-delivery)
-5. [Delivery Run Lifecycle](#5-delivery-run-lifecycle)
+5. [Intelligence Delivery Lifecycle](#5-delivery-run-lifecycle)
 6. [Retry & Error Handling](#6-retry--error-handling)
 7. [REST API Flows](#7-rest-api-flows)
 
@@ -46,7 +46,7 @@ flowchart LR
     end
 
     SR -.->|read channel_subscription| DB[(PostgreSQL)]
-    AD -.->|write delivery_run| DB
+    AD -.->|write intelligence_delivery| DB
 ```
 
 ---
@@ -83,23 +83,23 @@ sequenceDiagram
 
     Note over Engine,Dispatcher: Step 3 — Fan-Out Delivery
     par Deliver to Adaptor #1
-        Engine->>DB: save(DeliveryRun [PENDING] for Adaptor #1)
-        Engine->>Builder: build(triggerEvent, deliveryRunId)
+        Engine->>DB: save(IntelligenceDelivery [PENDING] for Adaptor #1)
+        Engine->>Builder: build(triggerEvent, intelligenceDeliveryId)
         Builder-->>Engine: FHIR CommunicationRequest / Task
-        Engine->>Dispatcher: dispatch(deliveryRun, fhirPayload, adaptor1)
-        Dispatcher->>DB: update(DeliveryRun [EXECUTING])
+        Engine->>Dispatcher: dispatch(intelligenceDelivery, fhirPayload, adaptor1)
+        Dispatcher->>DB: update(IntelligenceDelivery [EXECUTING])
         Dispatcher->>Webhook1: HTTP POST (FHIR payload)
         Webhook1-->>Dispatcher: 200 OK
-        Dispatcher->>DB: update(DeliveryRun [DELIVERED])
+        Dispatcher->>DB: update(IntelligenceDelivery [DELIVERED])
     and Deliver to Adaptor #2
-        Engine->>DB: save(DeliveryRun [PENDING] for Adaptor #2)
-        Engine->>Builder: build(triggerEvent, deliveryRunId)
+        Engine->>DB: save(IntelligenceDelivery [PENDING] for Adaptor #2)
+        Engine->>Builder: build(triggerEvent, intelligenceDeliveryId)
         Builder-->>Engine: FHIR CommunicationRequest / Task
-        Engine->>Dispatcher: dispatch(deliveryRun, fhirPayload, adaptor2)
-        Dispatcher->>DB: update(DeliveryRun [EXECUTING])
+        Engine->>Dispatcher: dispatch(intelligenceDelivery, fhirPayload, adaptor2)
+        Dispatcher->>DB: update(IntelligenceDelivery [EXECUTING])
         Dispatcher->>Webhook2: HTTP POST (FHIR payload)
         Webhook2-->>Dispatcher: 200 OK
-        Dispatcher->>DB: update(DeliveryRun [DELIVERED])
+        Dispatcher->>DB: update(IntelligenceDelivery [DELIVERED])
     end
 
     Engine-->>Consumer: processing complete
@@ -119,9 +119,9 @@ flowchart TD
     JOIN --> DEDUP["Deduplicate: step-specific<br/>subscriptions override wildcards<br/>for same adaptor"]
     DEDUP --> RESULT{Subscriptions found?}
 
-    RESULT -->|None| FAIL["Create DeliveryRun<br/>status = FAILED<br/>error = 'No active subscription for channel'"]
-    RESULT -->|1 adaptor| SINGLE["Create 1 DeliveryRun"]
-    RESULT -->|N adaptors| FANOUT["Create N DeliveryRuns<br/>(one per adaptor)"]
+    RESULT -->|None| FAIL["Create IntelligenceDelivery<br/>status = FAILED<br/>error = 'No active subscription for channel'"]
+    RESULT -->|1 adaptor| SINGLE["Create 1 IntelligenceDelivery"]
+    RESULT -->|N adaptors| FANOUT["Create N IntelligenceDeliveries<br/>(one per adaptor)"]
 
     SINGLE --> DISPATCH["Dispatch webhook"]
     FANOUT --> D1["Dispatch to Adaptor #1"]
@@ -208,21 +208,21 @@ sequenceDiagram
     participant Dispatcher as ActionDispatcher
     participant DB as PostgreSQL
     participant Adaptor as Receiver Adaptor (Webhook)
-    participant Audit as DeliveryAuditService
+    participant Audit as IntelligenceDeliveryAuditService
 
-    Dispatcher->>DB: update DeliveryRun status=EXECUTING
+    Dispatcher->>DB: update IntelligenceDelivery status=EXECUTING
     Dispatcher->>Audit: log(DISPATCHED, adaptorName, definition.address)
 
     Dispatcher->>Adaptor: HTTP POST definition.address
-    Note right of Adaptor: Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id: {runId}<br/>X-CCE-Intelligence-Event-Id: {intelligenceEventId}<br/>X-CCE-Signature-256: HMAC-SHA256 (if configured)<br/>+ adaptor auth headers from config
+    Note right of Adaptor: Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Intelligence-Delivery-Id: {runId}<br/>X-CCE-Intelligence-Event-Id: {intelligenceEventId}<br/>X-CCE-Signature-256: HMAC-SHA256 (if configured)<br/>+ adaptor auth headers from config
 
     alt HTTP 2xx
         Adaptor-->>Dispatcher: 200 OK
-        Dispatcher->>DB: update DeliveryRun status=DELIVERED, delivered_at=now()
+        Dispatcher->>DB: update IntelligenceDelivery status=DELIVERED, delivered_at=now()
         Dispatcher->>Audit: log(DELIVERED, httpStatus=200)
     else HTTP 4xx (non-retryable)
         Adaptor-->>Dispatcher: 400/401/403/404
-        Dispatcher->>DB: update DeliveryRun status=FAILED
+        Dispatcher->>DB: update IntelligenceDelivery status=FAILED
         Dispatcher->>Audit: log(FAILED, httpStatus, "non-retryable")
     else HTTP 5xx / timeout (retryable)
         Adaptor-->>Dispatcher: 500/503/timeout
@@ -235,7 +235,7 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     TE["TriggerEvent fields<br/>actionType, severity, intelligenceChannel,<br/>subject, etc."] --> FB[FhirPayloadBuilder]
-    DRI["DeliveryRun ID"] --> FB
+    DRI["IntelligenceDelivery ID"] --> FB
     AT{"ActionType?"} --> FB
     FB -->|NOTIFICATION / ESCALATION| CR["FHIR CommunicationRequest"]
     FB -->|COORDINATION| TK["FHIR Task"]
@@ -244,15 +244,15 @@ flowchart LR
 
     subgraph "HTTP POST to Receiver Adaptor"
         H
-        Headers["Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Delivery-Run-Id<br/>X-CCE-Intelligence-Event-Id<br/>X-CCE-Signature-256 (if webhookSecret configured)<br/>+ adaptor.config authHeader + customHeaders"]
+        Headers["Headers:<br/>Content-Type: application/fhir+json<br/>X-CCE-Intelligence-Delivery-Id<br/>X-CCE-Intelligence-Event-Id<br/>X-CCE-Signature-256 (if webhookSecret configured)<br/>+ adaptor.config authHeader + customHeaders"]
     end
 ```
 
 ---
 
-## 5. Delivery Run Lifecycle
+## 5. Intelligence Delivery Lifecycle
 
-State machine for `delivery_run.status` — all valid transitions.
+State machine for `intelligence_delivery.status` — all valid transitions.
 
 ```mermaid
 stateDiagram-v2
@@ -270,7 +270,7 @@ stateDiagram-v2
     CANCELLED --> [*]
 
     note right of PENDING
-        DeliveryRun created,
+        IntelligenceDelivery created,
         awaiting dispatch
     end note
 
@@ -383,17 +383,17 @@ sequenceDiagram
     Controller-->>Client: 201 Created
 ```
 
-### 7.2 Cancel Delivery Run
+### 7.2 Cancel Intelligence Delivery
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Controller as DeliveryRunController
-    participant Service as DeliveryRunService
+    participant Controller as IntelligenceDeliveryController
+    participant Service as IntelligenceDeliveryService
     participant DB as PostgreSQL
-    participant Audit as DeliveryAuditService
+    participant Audit as IntelligenceDeliveryAuditService
 
-    Client->>Controller: POST /v1/delivery-runs/{id}/cancel
+    Client->>Controller: POST /v1/intelligence-deliveries/{id}/cancel
     Controller->>Service: cancel(id)
     Service->>DB: findById(id)
     alt Not found
@@ -409,7 +409,7 @@ sequenceDiagram
 
     Service->>DB: update status=CANCELLED
     Service->>Audit: log(CANCELLED, actor=requestUser)
-    Service-->>Controller: DeliveryRunDto
+    Service-->>Controller: IntelligenceDeliveryDto
     Controller-->>Client: 200 OK
 ```
 
@@ -436,10 +436,10 @@ sequenceDiagram
         Controller-->>Client: 422 — Active channel subscriptions reference this adaptor
     end
 
-    Service->>DB: existsActiveDeliveryRuns(adaptorId)
-    alt Active delivery runs exist
+    Service->>DB: existsActiveIntelligenceDeliveries(adaptorId)
+    alt Active intelligence deliveries exist
         Service-->>Controller: UnprocessableEntityException
-        Controller-->>Client: 422 — Active delivery runs reference this adaptor
+        Controller-->>Client: 422 — Active intelligence deliveries reference this adaptor
     end
 
     Service->>DB: delete(adaptor)

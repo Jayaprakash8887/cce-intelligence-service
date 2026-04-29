@@ -8,7 +8,7 @@
 
 ## Table of Contents
 
-1. [Delivery Runs](#1-delivery-runs)
+1. [Intelligence Deliveries](#1-intelligence-deliveries)
 2. [Channel Subscriptions](#2-channel-subscriptions)
 3. [Receiver Adaptors](#3-receiver-adaptors)
 4. [Actuator Endpoints](#4-actuator-endpoints)
@@ -16,17 +16,17 @@
 
 ---
 
-## 1. Delivery Runs
+## 1. Intelligence Deliveries
 
-Delivery Runs track the **delivery lifecycle** of fired intelligence actions to Receiver Adaptors. Created automatically when the intelligence engine processes a trigger and fans out to subscribed adaptors. Exposed read-only with support for manual cancellation.
+Intelligence Deliveries track the **delivery lifecycle** of fired intelligence actions to Receiver Adaptors. Created automatically when the intelligence engine processes a trigger and fans out to subscribed adaptors. Exposed read-only with support for manual cancellation.
 
-**Required scope**: `delivery-runs:read` (GET), `delivery-runs:write` (POST cancel)
+**Required scope**: `intelligence-deliveries:read` (GET), `intelligence-deliveries:write` (POST cancel)
 
 ---
 
-### 1.1 List Delivery Runs
+### 1.1 List Intelligence Deliveries
 
-**`GET /v1/delivery-runs`** — Retrieve delivery runs with filtering and pagination.
+**`GET /v1/intelligence-deliveries`** — Retrieve intelligence deliveries with filtering and pagination.
 
 **Query Parameters**
 
@@ -79,13 +79,13 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
 
 ---
 
-### 1.2 Get Delivery Run by ID
+### 1.2 Get Intelligence Delivery by ID
 
-**`GET /v1/delivery-runs/{id}`** — Retrieve a single delivery run with full detail including rendered payload and delivery result.
+**`GET /v1/intelligence-deliveries/{id}`** — Retrieve a single intelligence delivery with full detail including rendered payload and delivery result.
 
 | Path Parameter | Type | Description |
 |:---------------|:-----|:------------|
-| `id` | `UUID` | Delivery run ID |
+| `id` | `UUID` | Intelligence delivery ID |
 
 **Response:** `200 OK`
 
@@ -127,17 +127,17 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
 
 | Error Status | Condition |
 |:-------------|:----------|
-| `404` | Delivery run not found |
+| `404` | Intelligence delivery not found |
 
 ---
 
-### 1.3 Get Delivery Run Audit Trail
+### 1.3 Get Intelligence Delivery Audit Trail
 
-**`GET /v1/delivery-runs/{id}/audit`** — Retrieve the audit log entries for a delivery run.
+**`GET /v1/intelligence-deliveries/{id}/audit`** — Retrieve the audit log entries for a intelligence delivery.
 
 | Path Parameter | Type | Description |
 |:---------------|:-----|:------------|
-| `id` | `UUID` | Delivery run ID |
+| `id` | `UUID` | Intelligence delivery ID |
 
 **Response:** `200 OK`
 
@@ -146,7 +146,7 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
   "data": [
     {
       "id": "e5f6a7b8-0001-4000-e000-000000000001",
-      "deliveryRunId": "b2c3d4e5-0001-4000-b000-000000000001",
+      "intelligenceDeliveryId": "b2c3d4e5-0001-4000-b000-000000000001",
       "eventType": "CREATED",
       "actor": "system",
       "details": null,
@@ -154,7 +154,7 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
     },
     {
       "id": "e5f6a7b8-0002-4000-e000-000000000002",
-      "deliveryRunId": "b2c3d4e5-0001-4000-b000-000000000001",
+      "intelligenceDeliveryId": "b2c3d4e5-0001-4000-b000-000000000001",
       "eventType": "DISPATCHED",
       "actor": "system",
       "details": { "adaptorName": "Kigali South SMS Gateway", "endpointUrl": "https://sms.example.com/webhook" },
@@ -162,7 +162,7 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
     },
     {
       "id": "e5f6a7b8-0003-4000-e000-000000000003",
-      "deliveryRunId": "b2c3d4e5-0001-4000-b000-000000000001",
+      "intelligenceDeliveryId": "b2c3d4e5-0001-4000-b000-000000000001",
       "eventType": "DELIVERED",
       "actor": "system",
       "details": { "httpStatus": 200, "responseBody": "{\"status\": \"accepted\"}" },
@@ -174,20 +174,20 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
 
 | Error Status | Condition |
 |:-------------|:----------|
-| `404` | Delivery run not found |
+| `404` | Intelligence delivery not found |
 
 ---
 
-### 1.4 Cancel Delivery Run
+### 1.4 Cancel Intelligence Delivery
 
-**`POST /v1/delivery-runs/{id}/cancel`** — Cancel a pending or failed delivery run.
+**`POST /v1/intelligence-deliveries/{id}/cancel`** — Cancel a pending or failed intelligence delivery.
 
 | Path Parameter | Type | Description |
 |:---------------|:-----|:------------|
-| `id` | `UUID` | Delivery run ID |
+| `id` | `UUID` | Intelligence delivery ID |
 
 **Pre-conditions:**
-- Only delivery runs with status `PENDING` or `FAILED` can be cancelled.
+- Only intelligence deliveries with status `PENDING` or `FAILED` can be cancelled.
 - `EXECUTING`, `DELIVERED`, and `CANCELLED` runs cannot be cancelled.
 
 **Response:** `200 OK`
@@ -204,11 +204,11 @@ Delivery Runs track the **delivery lifecycle** of fired intelligence actions to 
 
 | Error Status | Condition |
 |:-------------|:----------|
-| `404` | Delivery run not found |
+| `404` | Intelligence delivery not found |
 | `422` | Status does not allow cancellation |
 
 **Side Effects:**
-- Creates a `delivery_audit_log` entry with `event_type = 'CANCELLED'`
+- Creates a `intelligence_delivery_audit_log` entry with `event_type = 'CANCELLED'`
 
 ---
 
@@ -382,15 +382,15 @@ Channel Subscriptions define the **many-to-many routing** between protocol defin
 | `id` | `UUID` | Channel subscription ID |
 
 **Pre-conditions:**
-- Only subscriptions with no `PENDING` or `EXECUTING` delivery runs can be deleted.
-- Subscriptions with historical delivery runs (`DELIVERED`, `FAILED`, `CANCELLED`) can be deleted; the `delivery_run.channel_subscription_id` FK is preserved (soft reference).
+- Only subscriptions with no `PENDING` or `EXECUTING` intelligence deliveries can be deleted.
+- Subscriptions with historical intelligence deliveries (`DELIVERED`, `FAILED`, `CANCELLED`) can be deleted; the `intelligence_delivery.channel_subscription_id` FK is preserved (soft reference).
 
 **Response:** `204 No Content`
 
 | Error Status | Condition |
 |:-------------|:----------|
 | `404` | Subscription not found |
-| `422` | Subscription has active (PENDING/EXECUTING) delivery runs |
+| `422` | Subscription has active (PENDING/EXECUTING) intelligence deliveries |
 
 ---
 
@@ -614,7 +614,7 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
 | `id` | `UUID` | Receiver adaptor ID |
 
 **Pre-conditions:**
-- Only adaptors with no `PENDING` or `EXECUTING` delivery runs (via channel subscriptions) can be deleted.
+- Only adaptors with no `PENDING` or `EXECUTING` intelligence deliveries (via channel subscriptions) can be deleted.
 - All channel subscriptions referencing this adaptor must be deleted or inactive first.
 
 **Response:** `204 No Content`
@@ -622,7 +622,7 @@ Receiver Adaptors represent external **webhook endpoints** that receive intellig
 | Error Status | Condition |
 |:-------------|:----------|
 | `404` | Receiver adaptor not found |
-| `422` | Adaptor has active delivery runs or active channel subscriptions |
+| `422` | Adaptor has active intelligence deliveries or active channel subscriptions |
 
 ---
 
@@ -663,8 +663,8 @@ All error responses follow a consistent envelope:
 {
   "error": {
     "code": "NOT_FOUND",
-    "message": "Delivery run not found: b2c3d4e5-0001-4000-b000-000000000099",
-    "path": "/v1/delivery-runs/b2c3d4e5-0001-4000-b000-000000000099",
+    "message": "Intelligence delivery not found: b2c3d4e5-0001-4000-b000-000000000099",
+    "path": "/v1/intelligence-deliveries/b2c3d4e5-0001-4000-b000-000000000099",
     "timestamp": "2026-03-25T10:05:00Z"
   }
 }

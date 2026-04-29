@@ -41,10 +41,10 @@ The service owns 4 tables (zero read-only Compliance dependencies at runtime):
 
 | Table | Owner | Purpose |
 |-------|-------|--------|
-| `delivery_run` | Intelligence | Delivery lifecycle per (intelligence_event × adaptor) |
+| `intelligence_delivery` | Intelligence | Delivery lifecycle per (intelligence_event × adaptor) |
 | `receiver_adaptor` | Intelligence | Registered webhook endpoints |
 | `channel_subscription` | Intelligence | Many-to-many routing map (protocol × action_id × channel → adaptors) |
-| `delivery_audit_log` | Intelligence | Audit trail |
+| `intelligence_delivery_audit_log` | Intelligence | Audit trail |
 
 ## Kafka Topics
 
@@ -59,9 +59,9 @@ All requests arrive via the **CCE Gateway Service** (pre-authenticated).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/delivery-runs` | List delivery runs (filtered) |
-| `GET` | `/v1/delivery-runs/{id}` | Get delivery run by ID |
-| `POST` | `/v1/delivery-runs/{id}/cancel` | Cancel a delivery run |
+| `GET` | `/v1/intelligence-deliveries` | List intelligence deliveries (filtered) |
+| `GET` | `/v1/intelligence-deliveries/{id}` | Get intelligence delivery by ID |
+| `POST` | `/v1/intelligence-deliveries/{id}/cancel` | Cancel a intelligence delivery |
 | `GET` | `/v1/receiver-adaptors` | List receiver adaptors |
 | `POST` | `/v1/receiver-adaptors` | Register a receiver adaptor |
 | `PUT` | `/v1/receiver-adaptors/{id}` | Update a receiver adaptor |
