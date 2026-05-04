@@ -73,7 +73,7 @@ jobs:
             /repos/openphc/deploy-scripts/actions/workflows/deploy.yml/dispatches \
             --input - <<'JSON'
           {
-            "ref": "demo",
+            "ref": "main",
             "inputs": { "target_env": "dev" }
           }
           JSON
