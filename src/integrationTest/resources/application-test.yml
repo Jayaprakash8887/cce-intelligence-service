@@ -1,0 +1,35 @@
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+  kafka:
+    consumer:
+      group-id: cce-intelligence-service-test
+      auto-offset-reset: earliest
+      properties:
+        spring.json.trusted.packages: org.openphc.cce.intelligence.kafka.model
+    producer:
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+server:
+  port: 0
+
+cce:
+  kafka:
+    topics:
+      intelligence-triggers: intelligence-triggers-test
+      dead-letter: intelligence-triggers-test.DLT
+  intelligence:
+    webhook:
+      connect-timeout-ms: 2000
+      read-timeout-ms: 5000
+      retry-attempts: 3
+      retry-interval-ms: 100
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus

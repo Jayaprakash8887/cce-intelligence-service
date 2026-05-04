@@ -1,0 +1,12 @@
+.git
+.github
+.gradle
+.vscode
+build
+bin
+artifacts
+docs
+*.md
+!README.md
+.gitignore
+.dockerignore

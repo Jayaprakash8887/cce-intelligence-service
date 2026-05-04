@@ -1,0 +1,2 @@
+-- Hibernate creates the tables from entities
+-- No stub tables needed for the new schema
