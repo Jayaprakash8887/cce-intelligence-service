@@ -31,13 +31,13 @@ public class IntelligenceDeliveryController {
             @RequestParam(required = false) UUID actionDefinitionId,
             @RequestParam(required = false) String actionType,
             @RequestParam(required = false) String severity,
-            @RequestParam(required = false) String channel,
+            @RequestParam(required = false) String destination,
             @RequestParam(required = false) UUID protocolDefinitionId,
             Pageable pageable) {
 
         Page<IntelligenceDelivery> page = deliveryService.findFiltered(
                 status, subject, intelligenceEventId, actionDefinitionId,
-                actionType, severity, channel, protocolDefinitionId, pageable);
+                actionType, severity, destination, protocolDefinitionId, pageable);
 
         List<IntelligenceDeliverySummaryDto> data = page.getContent().stream()
                 .map(this::toSummaryDto).toList();
@@ -82,14 +82,14 @@ public class IntelligenceDeliveryController {
                 .id(d.getId())
                 .intelligenceEventId(d.getIntelligenceEventId())
                 .actionDefinitionId(d.getActionDefinitionId())
-                .channelSubscriptionId(d.getChannelSubscriptionId())
+                .destinationAdaptorMappingId(d.getDestinationAdaptorMappingId())
                 .actionType(d.getActionType().name())
                 .status(d.getStatus().name())
                 .subject(d.getSubject())
                 .protocolCanonical(d.getProtocolCanonical())
                 .actionId(d.getActionId())
                 .severity(d.getSeverity().name())
-                .channel(d.getChannel())
+                .destination(d.getDestination())
                 .fhirPayload(d.getFhirPayload())
                 .deliveryResult(d.getDeliveryResult())
                 .attemptCount(d.getAttemptCount())
@@ -105,8 +105,8 @@ public class IntelligenceDeliveryController {
                 .intelligenceEventId(d.getIntelligenceEventId())
                 .actionType(d.getActionType().name())
                 .actionId(d.getActionId())
-                .channel(d.getChannel())
-                .channelSubscriptionId(d.getChannelSubscriptionId())
+                .destination(d.getDestination())
+                .destinationAdaptorMappingId(d.getDestinationAdaptorMappingId())
                 .status(d.getStatus().name())
                 .subject(d.getSubject())
                 .protocolCanonical(d.getProtocolCanonical())

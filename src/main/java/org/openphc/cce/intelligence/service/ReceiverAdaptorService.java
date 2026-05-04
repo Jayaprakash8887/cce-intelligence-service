@@ -3,7 +3,7 @@ package org.openphc.cce.intelligence.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import org.openphc.cce.intelligence.domain.entity.ReceiverAdaptor;
-import org.openphc.cce.intelligence.domain.repository.ChannelSubscriptionRepository;
+import org.openphc.cce.intelligence.domain.repository.DestinationAdaptorMappingRepository;
 import org.openphc.cce.intelligence.domain.repository.ReceiverAdaptorRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,7 +17,7 @@ import java.util.UUID;
 public class ReceiverAdaptorService {
 
     private final ReceiverAdaptorRepository adaptorRepository;
-    private final ChannelSubscriptionRepository subscriptionRepository;
+    private final DestinationAdaptorMappingRepository mappingRepository;
 
     public List<ReceiverAdaptor> findAll() {
         return adaptorRepository.findAll();
@@ -66,9 +66,9 @@ public class ReceiverAdaptorService {
         ReceiverAdaptor adaptor = adaptorRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Receiver adaptor not found: " + id));
 
-        boolean hasActiveSubscriptions = subscriptionRepository.existsByReceiverAdaptorIdAndStatus(id, "ACTIVE");
+        boolean hasActiveSubscriptions = mappingRepository.existsByReceiverAdaptorIdAndStatus(id, "ACTIVE");
         if (hasActiveSubscriptions) {
-            throw new IllegalStateException("Cannot delete adaptor with active channel subscriptions");
+            throw new IllegalStateException("Cannot delete adaptor with active destination adaptor mappings");
         }
 
         adaptorRepository.delete(adaptor);

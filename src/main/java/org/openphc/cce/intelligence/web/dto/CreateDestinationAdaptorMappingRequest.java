@@ -11,15 +11,10 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class CreateChannelSubscriptionRequest {
-
-    @NotNull
-    private UUID protocolDefinitionId;
-
-    private String actionId;
+public class CreateDestinationAdaptorMappingRequest {
 
     @NotBlank
-    private String channel;
+    private String destination;
 
     @NotNull
     private UUID receiverAdaptorId;

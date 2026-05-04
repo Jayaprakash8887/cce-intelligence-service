@@ -1,6 +1,5 @@
 package org.openphc.cce.intelligence.web.dto;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import lombok.*;
 
 import java.time.OffsetDateTime;
@@ -11,11 +10,9 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class ChannelSubscriptionDto {
+public class DestinationAdaptorMappingDto {
     private UUID id;
-    private UUID protocolDefinitionId;
-    private String actionId;
-    private String channel;
+    private String destination;
     private UUID receiverAdaptorId;
     private String receiverAdaptorName;
     private String status;

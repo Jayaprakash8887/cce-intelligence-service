@@ -15,8 +15,8 @@ public class IntelligenceDeliverySummaryDto {
     private UUID intelligenceEventId;
     private String actionType;
     private String actionId;
-    private String channel;
-    private UUID channelSubscriptionId;
+    private String destination;
+    private UUID destinationAdaptorMappingId;
     private String status;
     private String subject;
     private String protocolCanonical;

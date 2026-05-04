@@ -19,7 +19,7 @@ public class IntelligenceTriggerEvent {
     private UUID protocolDefinitionId;
     private String actionType;
     private String severity;
-    private String intelligenceChannel;
+    private String intelligenceDestination;
     private String stepState;
     private String actionId;
     private String protocolCanonical;

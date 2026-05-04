@@ -40,9 +40,9 @@ public class IntelligenceTriggerConsumer {
         MDC.put("stepState", event.getStepState());
 
         try {
-            log.info("Received intelligence trigger: eventId={}, subject={}, stepState={}, channel={}",
+            log.info("Received intelligence trigger: eventId={}, subject={}, stepState={}, destination={}",
                     event.getIntelligenceEventId(), event.getSubject(),
-                    event.getStepState(), event.getIntelligenceChannel());
+                    event.getStepState(), event.getIntelligenceDestination());
 
             String triggerType = deriveTriggerType(event.getStepState());
             Counter.builder("cce.intelligence.triggers.received")

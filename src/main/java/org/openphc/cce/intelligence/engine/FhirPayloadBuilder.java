@@ -76,7 +76,7 @@ public class FhirPayloadBuilder {
         // Recipient
         ArrayNode recipients = resource.putArray("recipient");
         ObjectNode recipient = recipients.addObject();
-        recipient.put("display", event.getIntelligenceChannel());
+        recipient.put("display", event.getIntelligenceDestination());
 
         // AuthoredOn
         resource.put("authoredOn", OffsetDateTime.now().toString());

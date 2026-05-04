@@ -195,7 +195,7 @@ spec:
 
 Flyway runs automatically on startup. No manual migration steps required.
 
-**Startup order constraint:** The CCE Compliance Service must have started at least once (to create the `protocol_definition` table) before this service starts, because `channel_subscription.protocol_definition_id` has a FK reference to it.
+**Startup order constraint:** No cross-service FK dependencies. The Intelligence Service is fully self-contained — the fat event design means no Compliance Service tables are referenced.
 
 To verify migration status:
 ```bash
@@ -233,7 +233,7 @@ Key application metrics:
 | `cce_intelligence_deliveries_delivered_total` | Counter | Successful deliveries |
 | `cce_intelligence_deliveries_failed_total` | Counter | Failed deliveries |
 | `cce_intelligence_webhook_duration_seconds` | Timer | Webhook response latency |
-| `cce_intelligence_subscriptions_active` | Gauge | Active channel subscriptions |
+| `cce_intelligence_destinations_active` | Gauge | Active destination-adaptor mappings |
 | `cce_intelligence_consumer_errors_total` | Counter | Consumer processing errors |
 
 ### 7.2 Alerting Recommendations

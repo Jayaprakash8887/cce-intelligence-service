@@ -15,14 +15,14 @@ public class IntelligenceDeliveryDto {
     private UUID id;
     private UUID intelligenceEventId;
     private UUID actionDefinitionId;
-    private UUID channelSubscriptionId;
+    private UUID destinationAdaptorMappingId;
     private String actionType;
     private String status;
     private String subject;
     private String protocolCanonical;
     private String actionId;
     private String severity;
-    private String channel;
+    private String destination;
     private JsonNode fhirPayload;
     private JsonNode deliveryResult;
     private int attemptCount;

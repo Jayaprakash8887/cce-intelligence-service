@@ -8,7 +8,7 @@
 
 ## Overview
 
-Initial release of the CCE Intelligence Service — the delivery engine of the CCE platform. Consumes self-contained intelligence trigger events from the Compliance Service via Kafka, builds FHIR R4-compliant payloads, resolves routing via channel subscriptions with step-level granularity, and delivers actions to registered Receiver Adaptors via webhook.
+Initial release of the CCE Intelligence Service — the delivery engine of the CCE platform. Consumes self-contained intelligence trigger events from the Compliance Service via Kafka, builds FHIR R4-compliant payloads, resolves routing via destination-adaptor mappings, and delivers actions to registered Receiver Adaptors via webhook.
 
 ---
 
@@ -17,10 +17,10 @@ Initial release of the CCE Intelligence Service — the delivery engine of the C
 ### Core Pipeline
 - **Intelligence trigger consumption** from `cce.intelligence.triggers` Kafka topic
 - **FHIR R4 payload generation** — `CommunicationRequest` (notifications/escalations) and `Task` (coordination actions)
-- **Channel subscription routing** — many-to-many mapping with step-level (`action_id`) precedence over wildcards
-- **Parallel fan-out delivery** — concurrent webhook dispatch to all subscribed adaptors per trigger event
+- **Destination-based routing** — 1:1 mapping from destination to Receiver Adaptor via `destination_adaptor_mapping`
+- **Webhook delivery** — dispatch to the mapped adaptor per trigger event
 - **Three-phase transactional dispatch** — PENDING → EXECUTING → DELIVERED/FAILED with audit trail
-- **Idempotency** — `(intelligence_event_id, channel_subscription_id)` unique constraint prevents duplicate processing
+- **Idempotency** — `(intelligence_event_id, destination_adaptor_mapping_id)` unique constraint prevents duplicate processing
 
 ### Webhook Delivery
 - WebClient-based non-blocking HTTP POST
@@ -35,17 +35,17 @@ Initial release of the CCE Intelligence Service — the delivery engine of the C
 - `GET /v1/intelligence-deliveries/{id}/audit` — Delivery audit trail
 - `POST /v1/intelligence-deliveries/{id}/cancel` — Cancel PENDING/FAILED deliveries
 - `CRUD /v1/receiver-adaptors` — Receiver Adaptor management
-- `CRUD /v1/channel-subscriptions` — Channel Subscription management
+- `CRUD /v1/destination-adaptor-mappings` — Destination Adaptor Mapping management
 - Consistent `ApiResponse<T>` envelope with `data` + `pagination` fields
 - Global exception handling (404, 400, 409, 422)
 
 ### Observability
-- Micrometer + Prometheus metrics (triggers received, deliveries dispatched/delivered/failed, webhook duration, active subscriptions)
+- Micrometer + Prometheus metrics (triggers received, deliveries dispatched/delivered/failed, webhook duration, active destinations)
 - MDC-based structured logging with `correlationId`, `intelligenceEventId`, `subject`
 - Spring Boot Actuator health checks (db, kafka, diskSpace)
 
 ### Database
-- 4 owned tables: `receiver_adaptor`, `channel_subscription`, `intelligence_delivery`, `intelligence_delivery_audit_log`
+- 4 owned tables: `receiver_adaptor`, `destination_adaptor_mapping`, `intelligence_delivery`, `intelligence_delivery_audit_log`
 - Flyway migrations (V1 schema)
 - Shared `cce_collector` database — zero Compliance table reads at runtime (fat event design)
 - JsonNode for all JSONB columns

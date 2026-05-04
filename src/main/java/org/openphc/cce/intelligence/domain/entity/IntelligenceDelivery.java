@@ -31,12 +31,12 @@ public class IntelligenceDelivery {
     @Column(name = "action_definition_id", nullable = false)
     private UUID actionDefinitionId;
 
-    @Column(name = "channel_subscription_id")
-    private UUID channelSubscriptionId;
+    @Column(name = "destination_adaptor_mapping_id")
+    private UUID destinationAdaptorMappingId;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "channel_subscription_id", insertable = false, updatable = false)
-    private ChannelSubscription channelSubscription;
+    @JoinColumn(name = "destination_adaptor_mapping_id", insertable = false, updatable = false)
+    private DestinationAdaptorMapping destinationAdaptorMapping;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "action_type", nullable = false)
@@ -60,7 +60,7 @@ public class IntelligenceDelivery {
     private IntelligenceSeverity severity;
 
     @Column(nullable = false)
-    private String channel;
+    private String destination;
 
     @Column(name = "fhir_payload", nullable = false, columnDefinition = "jsonb")
     @JdbcTypeCode(SqlTypes.JSON)

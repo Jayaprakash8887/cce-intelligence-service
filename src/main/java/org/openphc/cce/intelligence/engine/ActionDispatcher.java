@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
-import org.openphc.cce.intelligence.domain.entity.ChannelSubscription;
+import org.openphc.cce.intelligence.domain.entity.DestinationAdaptorMapping;
 import org.openphc.cce.intelligence.domain.entity.IntelligenceDelivery;
 import org.openphc.cce.intelligence.domain.enums.ActionType;
 import org.openphc.cce.intelligence.domain.enums.IntelligenceDeliveryStatus;
@@ -45,30 +45,30 @@ public class ActionDispatcher {
         this.transactionTemplate = transactionTemplate;
     }
 
-    public void dispatch(IntelligenceTriggerEvent event, ChannelSubscription subscription) {
-        UUID subscriptionId = subscription.getId();
+    public void dispatch(IntelligenceTriggerEvent event, DestinationAdaptorMapping mapping) {
+        UUID mappingId = mapping.getId();
 
         // Phase 1: Create delivery record in transaction
         IntelligenceDelivery delivery = transactionTemplate.execute(status -> {
             // Idempotency guard
-            if (intelligenceDeliveryRepository.existsByIntelligenceEventIdAndChannelSubscriptionId(
-                    event.getIntelligenceEventId(), subscriptionId)) {
-                log.debug("Delivery already exists for eventId={}, subscriptionId={}",
-                        event.getIntelligenceEventId(), subscriptionId);
+            if (intelligenceDeliveryRepository.existsByIntelligenceEventIdAndDestinationAdaptorMappingId(
+                    event.getIntelligenceEventId(), mappingId)) {
+                log.debug("Delivery already exists for eventId={}, mappingId={}",
+                        event.getIntelligenceEventId(), mappingId);
                 return null;
             }
 
             IntelligenceDelivery d = IntelligenceDelivery.builder()
                     .intelligenceEventId(event.getIntelligenceEventId())
                     .actionDefinitionId(event.getActionDefinitionId())
-                    .channelSubscriptionId(subscriptionId)
+                    .destinationAdaptorMappingId(mappingId)
                     .actionType(resolveActionType(event))
                     .status(IntelligenceDeliveryStatus.PENDING)
                     .subject(event.getSubject())
                     .protocolCanonical(event.getProtocolCanonical())
                     .actionId(event.getActionId())
                     .severity(IntelligenceSeverity.valueOf(event.getSeverity().toUpperCase()))
-                    .channel(event.getIntelligenceChannel())
+                    .destination(event.getIntelligenceDestination())
                     .fhirPayload(fhirPayloadBuilder.buildPayload(event, null))
                     .build();
 
@@ -101,8 +101,8 @@ public class ActionDispatcher {
                 .increment();
 
         // Phase 2: HTTP call OUTSIDE transaction
-        String endpointUrl = subscription.getReceiverAdaptor().getDefinition().get("address").asText();
-        JsonNode adaptorConfig = subscription.getReceiverAdaptor().getConfig();
+        String endpointUrl = mapping.getReceiverAdaptor().getDefinition().get("address").asText();
+        JsonNode adaptorConfig = mapping.getReceiverAdaptor().getConfig();
 
         WebhookResult result = webhookDeliveryClient.deliver(
                 delivery.getFhirPayload(), endpointUrl, deliveryId, event.getIntelligenceEventId(), adaptorConfig);

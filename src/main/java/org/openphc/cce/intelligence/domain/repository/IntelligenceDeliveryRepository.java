@@ -14,7 +14,7 @@ import java.util.UUID;
 @Repository
 public interface IntelligenceDeliveryRepository extends JpaRepository<IntelligenceDelivery, UUID>, JpaSpecificationExecutor<IntelligenceDelivery> {
 
-    boolean existsByIntelligenceEventIdAndChannelSubscriptionId(UUID intelligenceEventId, UUID channelSubscriptionId);
+    boolean existsByIntelligenceEventIdAndDestinationAdaptorMappingId(UUID intelligenceEventId, UUID destinationAdaptorMappingId);
 
     List<IntelligenceDelivery> findByIntelligenceEventId(UUID intelligenceEventId);
 
@@ -22,5 +22,5 @@ public interface IntelligenceDeliveryRepository extends JpaRepository<Intelligen
 
     Page<IntelligenceDelivery> findBySubject(String subject, Pageable pageable);
 
-    boolean existsByChannelSubscriptionIdAndStatusIn(UUID channelSubscriptionId, List<IntelligenceDeliveryStatus> statuses);
+    boolean existsByDestinationAdaptorMappingIdAndStatusIn(UUID destinationAdaptorMappingId, List<IntelligenceDeliveryStatus> statuses);
 }

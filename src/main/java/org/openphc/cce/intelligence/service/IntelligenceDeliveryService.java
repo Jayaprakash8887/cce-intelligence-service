@@ -36,7 +36,7 @@ public class IntelligenceDeliveryService {
 
     public Page<IntelligenceDelivery> findFiltered(String status, String subject, UUID intelligenceEventId,
                                                     UUID actionDefinitionId, String actionType, String severity,
-                                                    String channel, UUID protocolDefinitionId, Pageable pageable) {
+                                                    String destination, UUID protocolDefinitionId, Pageable pageable) {
         Specification<IntelligenceDelivery> spec = Specification.where(null);
 
         if (status != null) {
@@ -60,12 +60,11 @@ public class IntelligenceDeliveryService {
             IntelligenceSeverity sev = IntelligenceSeverity.valueOf(severity.toUpperCase());
             spec = spec.and((root, query, cb) -> cb.equal(root.get("severity"), sev));
         }
-        if (channel != null) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("channel"), channel));
+        if (destination != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("destination"), destination));
         }
         if (protocolDefinitionId != null) {
-            // Filter by protocol via channel_subscription join or protocolCanonical
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("channelSubscription").get("protocolDefinitionId"), protocolDefinitionId));
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("destinationAdaptorMapping").get("destination"), protocolDefinitionId.toString()));
         }
 
         return deliveryRepository.findAll(spec, pageable);

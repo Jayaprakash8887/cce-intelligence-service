@@ -4,11 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.*;
-import org.openphc.cce.intelligence.domain.entity.ChannelSubscription;
+import org.openphc.cce.intelligence.domain.entity.DestinationAdaptorMapping;
 import org.openphc.cce.intelligence.domain.entity.IntelligenceDelivery;
 import org.openphc.cce.intelligence.domain.entity.ReceiverAdaptor;
 import org.openphc.cce.intelligence.domain.enums.IntelligenceDeliveryStatus;
-import org.openphc.cce.intelligence.domain.repository.ChannelSubscriptionRepository;
+import org.openphc.cce.intelligence.domain.repository.DestinationAdaptorMappingRepository;
 import org.openphc.cce.intelligence.domain.repository.IntelligenceDeliveryAuditLogRepository;
 import org.openphc.cce.intelligence.domain.repository.IntelligenceDeliveryRepository;
 import org.openphc.cce.intelligence.domain.repository.ReceiverAdaptorRepository;
@@ -87,7 +87,7 @@ class IntelligenceEndToEndIntegrationTest {
     private IntelligenceDeliveryAuditLogRepository auditLogRepository;
 
     @MockBean
-    private ChannelSubscriptionRepository subscriptionRepository;
+    private DestinationAdaptorMappingRepository mappingRepository;
 
     @MockBean
     private ReceiverAdaptorRepository adaptorRepository;
@@ -97,10 +97,8 @@ class IntelligenceEndToEndIntegrationTest {
 
     private final List<IntelligenceDelivery> savedDeliveries = new CopyOnWriteArrayList<>();
 
-    private static final UUID PROTOCOL_DEF_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID ADAPTOR_ID_1 = UUID.fromString("22222222-2222-2222-2222-222222222221");
-    private static final UUID ADAPTOR_ID_2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
-    private static final UUID ADAPTOR_ID_3 = UUID.fromString("22222222-2222-2222-2222-222222222223");
+    private static final UUID MAPPING_ID = UUID.fromString("33333333-3333-3333-3333-333333333331");
 
     @BeforeEach
     void setup() {
@@ -108,17 +106,13 @@ class IntelligenceEndToEndIntegrationTest {
         String mockUrl = "http://localhost:9999/webhook";
 
         ReceiverAdaptor adaptor1 = buildAdaptor(ADAPTOR_ID_1, "Hospital EHR", mockUrl);
-        ReceiverAdaptor adaptor2 = buildAdaptor(ADAPTOR_ID_2, "Lab System", mockUrl);
-        ReceiverAdaptor adaptor3 = buildAdaptor(ADAPTOR_ID_3, "Notification Hub", mockUrl);
 
-        ChannelSubscription stepSub = buildSubscription(UUID.randomUUID(), PROTOCOL_DEF_ID, "action-overdue-check", "sms", ADAPTOR_ID_1, adaptor1);
-        ChannelSubscription wildcardSub1 = buildSubscription(UUID.randomUUID(), PROTOCOL_DEF_ID, null, "sms", ADAPTOR_ID_2, adaptor2);
-        ChannelSubscription wildcardSub2 = buildSubscription(UUID.randomUUID(), PROTOCOL_DEF_ID, null, "sms", ADAPTOR_ID_3, adaptor3);
+        DestinationAdaptorMapping mapping = buildMapping(MAPPING_ID, "sms", ADAPTOR_ID_1, adaptor1);
 
-        when(subscriptionRepository.findRoutableSubscriptions(any(), any(), any()))
-                .thenReturn(List.of(stepSub, wildcardSub1, wildcardSub2));
+        when(mappingRepository.findByDestinationAndStatus("sms", "ACTIVE"))
+                .thenReturn(Optional.of(mapping));
 
-        when(deliveryRepository.existsByIntelligenceEventIdAndChannelSubscriptionId(any(), any()))
+        when(deliveryRepository.existsByIntelligenceEventIdAndDestinationAdaptorMappingId(any(), any()))
                 .thenReturn(false);
 
         when(deliveryRepository.findByIntelligenceEventId(any())).thenReturn(List.of());
@@ -168,11 +162,11 @@ class IntelligenceEndToEndIntegrationTest {
 
     @Test
     @Order(1)
-    void testOverdueTriggerProducesDeliveries() {
+    void testOverdueTriggerProducesDelivery() {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "MEDIUM", "CommunicationRequest", "action-overdue-check");
         consumer.consume(event);
 
-        assertThat(countDelivered()).isEqualTo(3);
+        assertThat(countDelivered()).isEqualTo(1);
 
         JsonNode payload = getFirstDelivered().getFhirPayload();
         assertThat(payload.get("resourceType").asText()).isEqualTo("CommunicationRequest");
@@ -186,7 +180,7 @@ class IntelligenceEndToEndIntegrationTest {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "CRITICAL", "CommunicationRequest", "action-overdue-check");
         consumer.consume(event);
 
-        assertThat(countDelivered()).isEqualTo(3);
+        assertThat(countDelivered()).isEqualTo(1);
         assertThat(getFirstDelivered().getFhirPayload().get("priority").asText()).isEqualTo("asap");
     }
 
@@ -196,7 +190,7 @@ class IntelligenceEndToEndIntegrationTest {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "HIGH", "Task", "action-overdue-check");
         consumer.consume(event);
 
-        assertThat(countDelivered()).isEqualTo(3);
+        assertThat(countDelivered()).isEqualTo(1);
         assertThat(getFirstDelivered().getFhirPayload().get("resourceType").asText()).isEqualTo("Task");
     }
 
@@ -209,7 +203,7 @@ class IntelligenceEndToEndIntegrationTest {
 
         int countAfterFirst = savedDeliveries.size();
 
-        when(deliveryRepository.existsByIntelligenceEventIdAndChannelSubscriptionId(eq(eventId), any()))
+        when(deliveryRepository.existsByIntelligenceEventIdAndDestinationAdaptorMappingId(eq(eventId), any()))
                 .thenReturn(true);
 
         consumer.consume(event);
@@ -225,7 +219,7 @@ class IntelligenceEndToEndIntegrationTest {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "LOW", "CommunicationRequest", "action-overdue-check");
         consumer.consume(event);
 
-        assertThat(countFailed()).isEqualTo(3);
+        assertThat(countFailed()).isEqualTo(1);
         assertThat(countDelivered()).isEqualTo(0);
     }
 
@@ -238,19 +232,19 @@ class IntelligenceEndToEndIntegrationTest {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "LOW", "CommunicationRequest", "action-overdue-check");
         consumer.consume(event);
 
-        assertThat(countDelivered()).isEqualTo(3);
+        assertThat(countDelivered()).isEqualTo(1);
         IntelligenceDelivery d = getFirstDelivered();
         assertThat(d.getAttemptCount()).isEqualTo(3);
     }
 
     @Test
     @Order(7)
-    void testStepLevelRouting() {
+    void testDestinationRouting() {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "LOW", "CommunicationRequest", "action-overdue-check");
         consumer.consume(event);
 
-        assertThat(countDelivered()).isEqualTo(3);
-        verify(subscriptionRepository).findRoutableSubscriptions(any(), eq("action-overdue-check"), eq("sms"));
+        assertThat(countDelivered()).isEqualTo(1);
+        verify(mappingRepository).findByDestinationAndStatus("sms", "ACTIVE");
     }
 
     @Test
@@ -259,7 +253,7 @@ class IntelligenceEndToEndIntegrationTest {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "completed", "LOW", "CommunicationRequest", "action-overdue-check");
         consumer.consume(event);
 
-        assertThat(countDelivered()).isEqualTo(3);
+        assertThat(countDelivered()).isEqualTo(1);
     }
 
     @Test
@@ -302,13 +296,10 @@ class IntelligenceEndToEndIntegrationTest {
                 .build();
     }
 
-    private ChannelSubscription buildSubscription(UUID id, UUID protocolDefId, String actionId,
-                                                   String channel, UUID adaptorId, ReceiverAdaptor adaptor) {
-        return ChannelSubscription.builder()
+    private DestinationAdaptorMapping buildMapping(UUID id, String destination, UUID adaptorId, ReceiverAdaptor adaptor) {
+        return DestinationAdaptorMapping.builder()
                 .id(id)
-                .protocolDefinitionId(protocolDefId)
-                .actionId(actionId)
-                .channel(channel)
+                .destination(destination)
                 .receiverAdaptorId(adaptorId)
                 .receiverAdaptor(adaptor)
                 .status("ACTIVE")
@@ -321,10 +312,10 @@ class IntelligenceEndToEndIntegrationTest {
         event.setSubject("Patient/test-patient-123");
         event.setIntelligenceEventId(eventId);
         event.setActionDefinitionId(UUID.randomUUID());
-        event.setProtocolDefinitionId(PROTOCOL_DEF_ID);
+        event.setProtocolDefinitionId(UUID.randomUUID());
         event.setActionType(actionType);
         event.setSeverity(severity);
-        event.setIntelligenceChannel("sms");
+        event.setIntelligenceDestination("sms");
         event.setStepState(stepState);
         event.setActionId(actionId);
         event.setProtocolCanonical("http://example.org/PlanDefinition/test-protocol");

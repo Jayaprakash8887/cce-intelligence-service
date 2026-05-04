@@ -1,16 +1,9 @@
 -- ============================================================================
 -- V1: Intelligence Service Schema
 -- Database: cce_collector (shared with Compliance Service)
--- Tables: receiver_adaptor, channel_subscription, intelligence_delivery,
+-- Tables: receiver_adaptor, destination_adaptor_mapping, intelligence_delivery,
 --         intelligence_delivery_audit_log
 -- ============================================================================
-
--- Note: protocol_definition table is owned/created by the Compliance Service.
--- The FK from channel_subscription references it for referential integrity.
--- If running standalone (without Compliance migration), create a minimal stub:
-CREATE TABLE IF NOT EXISTS protocol_definition (
-    id UUID PRIMARY KEY
-);
 
 -- ============================================================================
 -- 1. receiver_adaptor
@@ -35,77 +28,60 @@ CREATE TABLE receiver_adaptor (
 );
 
 -- ============================================================================
--- 2. channel_subscription
+-- 2. destination_adaptor_mapping
 -- ============================================================================
-CREATE TABLE channel_subscription (
+CREATE TABLE destination_adaptor_mapping (
     id                      UUID        NOT NULL DEFAULT gen_random_uuid(),
-    protocol_definition_id  UUID        NOT NULL,
-    action_id               VARCHAR,
-    channel                 VARCHAR     NOT NULL,
+    destination             VARCHAR     NOT NULL,
     receiver_adaptor_id     UUID        NOT NULL,
     status                  VARCHAR     NOT NULL DEFAULT 'ACTIVE',
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    CONSTRAINT channel_subscription_pkey PRIMARY KEY (id),
-    CONSTRAINT channel_subscription_protocol_definition_id_fkey
-        FOREIGN KEY (protocol_definition_id) REFERENCES protocol_definition(id),
-    CONSTRAINT channel_subscription_receiver_adaptor_id_fkey
+    CONSTRAINT destination_adaptor_mapping_pkey PRIMARY KEY (id),
+    CONSTRAINT destination_adaptor_mapping_destination_key UNIQUE (destination),
+    CONSTRAINT destination_adaptor_mapping_receiver_adaptor_id_fkey
         FOREIGN KEY (receiver_adaptor_id) REFERENCES receiver_adaptor(id),
-    CONSTRAINT channel_subscription_status_check
+    CONSTRAINT destination_adaptor_mapping_status_check
         CHECK (status IN ('ACTIVE', 'INACTIVE'))
 );
 
--- Partial unique: step-specific subscriptions
-CREATE UNIQUE INDEX channel_subscription_step_key
-    ON channel_subscription (protocol_definition_id, action_id, channel, receiver_adaptor_id)
-    WHERE action_id IS NOT NULL;
-
--- Partial unique: wildcard subscriptions
-CREATE UNIQUE INDEX channel_subscription_wildcard_key
-    ON channel_subscription (protocol_definition_id, channel, receiver_adaptor_id)
-    WHERE action_id IS NULL;
-
--- Routing lookup index
-CREATE INDEX idx_channel_subscription_routing
-    ON channel_subscription (protocol_definition_id, action_id, channel);
-
--- Active subscriptions partial index
-CREATE INDEX idx_channel_subscription_active
-    ON channel_subscription (status)
-    WHERE status = 'ACTIVE';
-
 -- Adaptor lookup
-CREATE INDEX idx_channel_subscription_adaptor
-    ON channel_subscription (receiver_adaptor_id);
+CREATE INDEX idx_destination_adaptor_mapping_adaptor
+    ON destination_adaptor_mapping (receiver_adaptor_id);
+
+-- Active mappings partial index
+CREATE INDEX idx_destination_adaptor_mapping_active
+    ON destination_adaptor_mapping (status)
+    WHERE status = 'ACTIVE';
 
 -- ============================================================================
 -- 3. intelligence_delivery
 -- ============================================================================
 CREATE TABLE intelligence_delivery (
-    id                      UUID        NOT NULL DEFAULT gen_random_uuid(),
-    intelligence_event_id   UUID        NOT NULL,
-    action_definition_id    UUID        NOT NULL,
-    channel_subscription_id UUID,
-    action_type             VARCHAR     NOT NULL,
-    status                  VARCHAR     NOT NULL,
-    subject                 VARCHAR     NOT NULL,
-    protocol_canonical      VARCHAR     NOT NULL,
-    action_id               VARCHAR     NOT NULL,
-    severity                VARCHAR     NOT NULL,
-    channel                 VARCHAR     NOT NULL,
-    fhir_payload            JSONB       NOT NULL,
-    delivery_result         JSONB,
-    attempt_count           INTEGER     NOT NULL DEFAULT 0,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    delivered_at            TIMESTAMPTZ,
+    id                              UUID        NOT NULL DEFAULT gen_random_uuid(),
+    intelligence_event_id           UUID        NOT NULL,
+    action_definition_id            UUID        NOT NULL,
+    destination_adaptor_mapping_id  UUID,
+    action_type                     VARCHAR     NOT NULL,
+    status                          VARCHAR     NOT NULL,
+    subject                         VARCHAR     NOT NULL,
+    protocol_canonical              VARCHAR     NOT NULL,
+    action_id                       VARCHAR     NOT NULL,
+    severity                        VARCHAR     NOT NULL,
+    destination                     VARCHAR     NOT NULL,
+    fhir_payload                    JSONB       NOT NULL,
+    delivery_result                 JSONB,
+    attempt_count                   INTEGER     NOT NULL DEFAULT 0,
+    created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    delivered_at                    TIMESTAMPTZ,
 
     CONSTRAINT intelligence_delivery_pkey PRIMARY KEY (id),
-    CONSTRAINT intelligence_delivery_channel_subscription_id_fkey
-        FOREIGN KEY (channel_subscription_id) REFERENCES channel_subscription(id),
-    CONSTRAINT intelligence_delivery_intel_event_subscription_key
-        UNIQUE (intelligence_event_id, channel_subscription_id),
+    CONSTRAINT intelligence_delivery_destination_adaptor_mapping_id_fkey
+        FOREIGN KEY (destination_adaptor_mapping_id) REFERENCES destination_adaptor_mapping(id),
+    CONSTRAINT intelligence_delivery_event_mapping_key
+        UNIQUE (intelligence_event_id, destination_adaptor_mapping_id),
     CONSTRAINT intelligence_delivery_action_type_check
         CHECK (action_type IN ('NOTIFICATION', 'ESCALATION', 'COORDINATION')),
     CONSTRAINT intelligence_delivery_status_check

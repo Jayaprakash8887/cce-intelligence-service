@@ -7,26 +7,20 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "channel_subscription")
+@Table(name = "destination_adaptor_mapping")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class ChannelSubscription {
+public class DestinationAdaptorMapping {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "protocol_definition_id", nullable = false)
-    private UUID protocolDefinitionId;
-
-    @Column(name = "action_id")
-    private String actionId;
-
-    @Column(nullable = false)
-    private String channel;
+    @Column(nullable = false, unique = true)
+    private String destination;
 
     @Column(name = "receiver_adaptor_id", nullable = false)
     private UUID receiverAdaptorId;
