@@ -21,6 +21,7 @@
 git clone <repository-url>
 cd cce-intelligence-service
 
+
 # Build (skip tests for fast iteration)
 ./gradlew build -x test
 
