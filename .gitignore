@@ -36,5 +36,5 @@ bin/
 
 # Project
 artifacts/
-.github/
+.github/java-upgrade/
 target/
