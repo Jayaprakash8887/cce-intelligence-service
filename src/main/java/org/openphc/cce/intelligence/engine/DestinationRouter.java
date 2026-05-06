@@ -21,7 +21,7 @@ public class DestinationRouter {
      */
     public Optional<DestinationAdaptorMapping> resolveAdaptor(String destination) {
         Optional<DestinationAdaptorMapping> mapping = destinationAdaptorMappingRepository
-                .findByDestinationAndStatus(destination, "ACTIVE");
+                .findByDestinationAndStatusWithAdaptor(destination, "ACTIVE");
 
         if (mapping.isEmpty()) {
             log.warn("No active adaptor mapping for destination={}", destination);
