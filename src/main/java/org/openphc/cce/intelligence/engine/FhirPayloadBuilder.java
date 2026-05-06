@@ -27,7 +27,10 @@ public class FhirPayloadBuilder {
     public JsonNode buildPayload(IntelligenceTriggerEvent event, UUID intelligenceDeliveryId) {
         String actionType = event.getActionType();
 
-        if ("Task".equals(actionType) || "ServiceRequest".equals(actionType)) {
+        if ("ServiceRequest".equals(actionType)) {
+            return buildServiceRequest(event, intelligenceDeliveryId);
+        }
+        if ("Task".equals(actionType)) {
             return buildTask(event, intelligenceDeliveryId);
         }
         return buildCommunicationRequest(event, intelligenceDeliveryId);
@@ -36,7 +39,6 @@ public class FhirPayloadBuilder {
     private JsonNode buildCommunicationRequest(IntelligenceTriggerEvent event, UUID deliveryId) {
         ObjectNode resource = objectMapper.createObjectNode();
         resource.put("resourceType", "CommunicationRequest");
-        resource.put("id", deliveryId != null ? deliveryId.toString() : "pending");
         resource.put("status", "active");
         resource.put("priority", mapSeverityToFhirPriority(event.getSeverity()));
 
@@ -90,7 +92,6 @@ public class FhirPayloadBuilder {
     private JsonNode buildTask(IntelligenceTriggerEvent event, UUID deliveryId) {
         ObjectNode resource = objectMapper.createObjectNode();
         resource.put("resourceType", "Task");
-        resource.put("id", deliveryId != null ? deliveryId.toString() : "pending");
         resource.put("status", "requested");
         resource.put("intent", "order");
         resource.put("priority", mapSeverityToFhirPriority(event.getSeverity()));
@@ -117,6 +118,47 @@ public class FhirPayloadBuilder {
 
         // Description
         resource.put("description", buildSummary(event));
+
+        // AuthoredOn
+        resource.put("authoredOn", OffsetDateTime.now().toString());
+
+        // CCE Extensions
+        addExtensions(resource, event);
+
+        return resource;
+    }
+
+    private JsonNode buildServiceRequest(IntelligenceTriggerEvent event, UUID deliveryId) {
+        ObjectNode resource = objectMapper.createObjectNode();
+        resource.put("resourceType", "ServiceRequest");
+        resource.put("status", "active");
+        resource.put("intent", "order");
+        resource.put("priority", mapSeverityToFhirPriority(event.getSeverity()));
+
+        // Identifier
+        ArrayNode identifiers = resource.putArray("identifier");
+        ObjectNode identifier = identifiers.addObject();
+        identifier.put("system", "http://openphc.org/fhir/intelligence-delivery-id");
+        identifier.put("value", deliveryId != null ? deliveryId.toString() : "pending");
+
+        // Code
+        ObjectNode code = resource.putObject("code");
+        ArrayNode codings = code.putArray("coding");
+        ObjectNode coding = codings.addObject();
+        coding.put("system", "http://openphc.org/fhir/CodeSystem/cce-action-type");
+        coding.put("code", "ESCALATION");
+        coding.put("display", "Referral Escalation");
+
+        // Subject (FHIR identifier-based reference)
+        ObjectNode subject = resource.putObject("subject");
+        ObjectNode subjectIdentifier = subject.putObject("identifier");
+        subjectIdentifier.put("system", "http://openphc.org/fhir/patient-upid");
+        subjectIdentifier.put("value", event.getSubject());
+
+        // Note / description
+        ArrayNode notes = resource.putArray("note");
+        ObjectNode note = notes.addObject();
+        note.put("text", buildSummary(event));
 
         // AuthoredOn
         resource.put("authoredOn", OffsetDateTime.now().toString());
