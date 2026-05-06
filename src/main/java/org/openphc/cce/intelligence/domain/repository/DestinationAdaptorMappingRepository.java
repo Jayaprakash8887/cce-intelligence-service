@@ -15,6 +15,9 @@ public interface DestinationAdaptorMappingRepository extends JpaRepository<Desti
 
     Optional<DestinationAdaptorMapping> findByDestinationAndStatus(String destination, String status);
 
+    @Query("SELECT m FROM DestinationAdaptorMapping m JOIN FETCH m.receiverAdaptor WHERE m.destination = :destination AND m.status = :status")
+    Optional<DestinationAdaptorMapping> findByDestinationAndStatusWithAdaptor(@Param("destination") String destination, @Param("status") String status);
+
     List<DestinationAdaptorMapping> findByReceiverAdaptorId(UUID receiverAdaptorId);
 
     boolean existsByReceiverAdaptorIdAndStatus(UUID receiverAdaptorId, String status);
