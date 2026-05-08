@@ -1,6 +1,6 @@
 # CCE Intelligence Service
 
-The **delivery engine** of the CCE platform. Consumes **self-contained** intelligence trigger events from the Compliance Service via Kafka, builds **FHIR R4-compliant payloads** (`CommunicationRequest` / `Task`), resolves routing via **destination-adaptor mappings**, and delivers actions to registered **Receiver Adaptors** via webhook.
+The **delivery engine** of the CCE platform. Consumes **self-contained** intelligence trigger events from the Compliance Service via Kafka, builds **FHIR R4-compliant payloads** (`CommunicationRequest` / `Task` / `ServiceRequest` passthrough), resolves routing via **destination-adaptor mappings**, and delivers actions to registered **Receiver Adaptors** via webhook.
 
 > The Compliance Service evaluates *when* and *what* to act on, resolving all metadata into a self-contained trigger event. This service handles *where* (destination-based routing) and *how* (FHIR payload + webhook delivery) — with **zero Compliance table reads** on the hot path.
 
@@ -8,7 +8,7 @@ The **delivery engine** of the CCE platform. Consumes **self-contained** intelli
 
 ```
 Compliance Service → Kafka → Intelligence Consumer → Intelligence Engine
-  → Build FHIR Payload from trigger event (CommunicationRequest or Task)
+  → Build FHIR Payload from trigger event (CommunicationRequest / Task / ServiceRequest passthrough)
   → Resolve Destination → Receiver Adaptor (via destination_adaptor_mapping)
   → Webhook Delivery → Receiver Adaptor
 ```
@@ -79,7 +79,7 @@ All requests arrive via the **CCE Gateway Service** (pre-authenticated).
 44 source files across 10 packages. Key components:
 
 - **`engine/IntelligenceEngine`** — Core orchestrator (trigger → payload → route → deliver)
-- **`engine/FhirPayloadBuilder`** — Builds FHIR CommunicationRequest or Task from trigger event fields
+- **`engine/FhirPayloadBuilder`** — Builds FHIR CommunicationRequest or Task; passes through original payload for ServiceRequest actions
 - **`engine/DestinationRouter`** — Resolves destination → Receiver Adaptor via `destination_adaptor_mapping`
 - **`engine/ActionDispatcher`** — Three-phase transactional webhook delivery
 - **`webhook/WebhookDeliveryClient`** — WebClient-based HTTP delivery with retry, HMAC signing, and per-adaptor config

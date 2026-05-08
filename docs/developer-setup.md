@@ -172,7 +172,7 @@ cce-intelligence-service/
 │       │   │   └── repository/  # JPA repositories for all entities
 │       │   ├── engine/          # Intelligence processing pipeline
 │       │   │   ├── IntelligenceEngine.java   # Core orchestrator
-│       │   │   ├── FhirPayloadBuilder.java   # Builds FHIR CommunicationRequest or Task from trigger event
+│       │   │   ├── FhirPayloadBuilder.java   # Builds FHIR CommunicationRequest / Task; passes through ServiceRequest payload
 │       │   │   ├── DestinationRouter.java    # Resolve destination → Receiver Adaptor via destination_adaptor_mapping
 │       │   │   └── ActionDispatcher.java     # Deliver to mapped Receiver Adaptor
 │       │   ├── kafka/           # Kafka consumer

@@ -1,5 +1,6 @@
 package org.openphc.cce.intelligence.kafka.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.*;
 
 import java.time.OffsetDateTime;
@@ -24,4 +25,5 @@ public class IntelligenceTriggerEvent {
     private String actionId;
     private String protocolCanonical;
     private OffsetDateTime detectedAt;
+    private JsonNode eventPayload;
 }

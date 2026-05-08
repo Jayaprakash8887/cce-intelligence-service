@@ -89,7 +89,7 @@ sequenceDiagram
     Note over Engine,Dispatcher: Step 3 — Deliver
     Engine->>DB: save(IntelligenceDelivery [PENDING])
     Engine->>Builder: build(triggerEvent, intelligenceDeliveryId)
-    Builder-->>Engine: FHIR CommunicationRequest / Task
+    Builder-->>Engine: FHIR CommunicationRequest / Task / ServiceRequest passthrough
     Engine->>Dispatcher: dispatch(intelligenceDelivery, fhirPayload, adaptor)
     Dispatcher->>DB: update(IntelligenceDelivery [EXECUTING])
     Dispatcher->>Webhook: HTTP POST (FHIR payload)
@@ -182,13 +182,17 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    TE["TriggerEvent fields<br/>actionType, severity, intelligenceDestination,<br/>subject, etc."] --> FB[FhirPayloadBuilder]
+    TE["TriggerEvent fields<br/>actionType, severity, intelligenceDestination,<br/>subject, eventPayload, etc."] --> FB[FhirPayloadBuilder]
     DRI["IntelligenceDelivery ID"] --> FB
     AT{"ActionType?"} --> FB
     FB -->|NOTIFICATION / ESCALATION| CR["FHIR CommunicationRequest"]
-    FB -->|COORDINATION| TK["FHIR Task"]
+    FB -->|COORDINATION Task| TK["FHIR Task"]
+    FB -->|"ServiceRequest + eventPayload"| PT["Passthrough:<br/>Original eventPayload as-is"]
+    FB -->|"ServiceRequest (no eventPayload)"| SR["FHIR ServiceRequest (built)"]
     CR --> H[HTTP POST Body]
     TK --> H
+    PT --> H
+    SR --> H
 
     subgraph "HTTP POST to Receiver Adaptor"
         H
