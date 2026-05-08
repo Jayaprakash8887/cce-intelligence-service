@@ -109,7 +109,7 @@ class IntelligenceEndToEndIntegrationTest {
 
         DestinationAdaptorMapping mapping = buildMapping(MAPPING_ID, "sms", ADAPTOR_ID_1, adaptor1);
 
-        when(mappingRepository.findByDestinationAndStatus("sms", "ACTIVE"))
+        when(mappingRepository.findByDestinationAndStatusWithAdaptor("sms", "ACTIVE"))
                 .thenReturn(Optional.of(mapping));
 
         when(deliveryRepository.existsByIntelligenceEventIdAndDestinationAdaptorMappingId(any(), any()))
@@ -244,7 +244,7 @@ class IntelligenceEndToEndIntegrationTest {
         consumer.consume(event);
 
         assertThat(countDelivered()).isEqualTo(1);
-        verify(mappingRepository).findByDestinationAndStatus("sms", "ACTIVE");
+        verify(mappingRepository).findByDestinationAndStatusWithAdaptor("sms", "ACTIVE");
     }
 
     @Test

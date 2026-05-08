@@ -169,7 +169,8 @@ The **Kafka record value** is the `IntelligenceTriggerEvent` JSON payload (the `
   "stepState": "overdue",
   "actionId": "anc-visit-2",
   "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
-  "detectedAt": "2026-03-25T00:00:05Z"
+  "detectedAt": "2026-03-25T00:00:05Z",
+  "eventPayload": null
 }
 ```
 
@@ -189,6 +190,7 @@ The **Kafka record value** is the `IntelligenceTriggerEvent` JSON payload (the `
 | `actionId` | String | Yes | PlanDefinition action ID (e.g., `anc-visit-2`). Stored on `intelligence_delivery` for traceability and FHIR payload. |
 | `protocolCanonical` | String | Yes | Protocol `url\|version` |
 | `detectedAt` | OffsetDateTime | Yes | When the event was detected |
+| `eventPayload` | JsonNode | No | Original FHIR payload from the Compliance Service. When present **and** `actionType` is `ServiceRequest`, the `FhirPayloadBuilder` passes this through as-is to the Receiver Adaptor instead of constructing a synthetic FHIR resource. `null` for most trigger events (CommunicationRequest, Task). |
 
 > **Design rationale (fat event):** By including `actionDefinitionId`, `protocolDefinitionId`, `actionType`, `severity`, and `intelligenceDestination` in the event, the Intelligence Service eliminates all Compliance table reads (`intelligence_event_log`, `action_definition`, `protocol_instance`, `protocol_definition`, `step_instance`) from the processing hot path. This is safe because ActivityDefinitions and PlanDefinitions are immutable once published — the values at trigger time are the correct values for the lifetime of the intelligence event.
 
@@ -274,11 +276,42 @@ Use this derived type for the `cce.intelligence.triggers.received` counter tag.
   "stepState": "completed",
   "actionId": "anc-visit-2",
   "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
-  "detectedAt": "2026-04-02T10:30:00Z"
+  "detectedAt": "2026-04-02T10:30:00Z",
+  "eventPayload": null
 }
 ```
 
 > **Note:** Completion triggers have `stepState: "completed"`. The trigger type `step.completed` is derived from `stepState == "completed"`. Whether this represents a late or on-time completion depends on the PlanDefinition's action condition — the Intelligence Service treats both the same. See [Trigger Type Derivation](#trigger-type-derivation).
+
+### 5.4 ServiceRequest Trigger with Passthrough Payload
+
+When the Compliance Service triggers a `ServiceRequest` action, it can include the original incoming FHIR payload in the `eventPayload` field. The Intelligence Service passes this through to the Receiver Adaptor as-is, without constructing a synthetic FHIR resource.
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440102",
+  "subject": "260225-0002-5501",
+  "intelligenceEventId": "990e8400-e29b-41d4-a716-446655440013",
+  "actionDefinitionId": "aad00001-0001-0001-0001-000000000003",
+  "protocolDefinitionId": "ppd00001-0001-0001-0001-000000000001",
+  "actionType": "ServiceRequest",
+  "severity": "HIGH",
+  "intelligenceDestination": "lab-coordinator",
+  "stepState": "due",
+  "actionId": "lab-referral-1",
+  "protocolCanonical": "http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1",
+  "detectedAt": "2026-04-03T08:00:00Z",
+  "eventPayload": {
+    "resourceType": "ServiceRequest",
+    "status": "active",
+    "intent": "order",
+    "subject": { "identifier": { "system": "http://openphc.org/fhir/patient-upid", "value": "260225-0002-5501" } },
+    "code": { "coding": [{ "system": "http://loinc.org", "code": "26453-1", "display": "CBC" }] }
+  }
+}
+```
+
+> **Passthrough behavior:** When `actionType` is `ServiceRequest` and `eventPayload` is not `null`, the `FhirPayloadBuilder` returns `eventPayload` directly — no synthetic resource is constructed. If `eventPayload` is `null`, a `ServiceRequest` resource is built by `FhirPayloadBuilder` as a fallback.
 
 ---
 

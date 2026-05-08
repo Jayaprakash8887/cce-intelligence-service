@@ -27,8 +27,9 @@ public class FhirPayloadBuilder {
     public JsonNode buildPayload(IntelligenceTriggerEvent event, UUID intelligenceDeliveryId) {
         String actionType = event.getActionType();
 
-        if ("ServiceRequest".equals(actionType)) {
-            return buildServiceRequest(event, intelligenceDeliveryId);
+        // ServiceRequest: pass through the original event payload from the compliance service
+        if ("ServiceRequest".equals(actionType) && event.getEventPayload() != null) {
+            return event.getEventPayload();
         }
         if ("Task".equals(actionType)) {
             return buildTask(event, intelligenceDeliveryId);

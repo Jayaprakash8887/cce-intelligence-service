@@ -16,7 +16,7 @@ graph TB
     subgraph CCE Intelligence Service
         CONSUMER["Intelligence Trigger<br/>Consumer"]
         ENGINE["Intelligence Engine<br/>(Core Orchestrator)"]
-        BUILDER["FHIR Payload Builder<br/>(CommunicationRequest / Task)"]
+        BUILDER["FHIR Payload Builder<br/>(CommunicationRequest / Task / ServiceRequest passthrough)"]
         ROUTER["Destination Router<br/>(destination_adaptor_mapping)"]
         DISPATCHER["Action Dispatcher"]
         TRACKER["Intelligence Delivery Tracker"]
@@ -178,7 +178,7 @@ src/main/java/org/openphc/cce/intelligence/
 │       └── IntelligenceDeliveryAuditLogRepository.java
 ├── engine/
 │   ├── IntelligenceEngine.java                    # Core orchestrator — trigger → build payload → route → deliver
-│   ├── FhirPayloadBuilder.java                    # Builds FHIR CommunicationRequest or Task from trigger event
+│   ├── FhirPayloadBuilder.java                    # Builds FHIR CommunicationRequest / Task; passes through ServiceRequest payload
 │   ├── DestinationRouter.java                     # Resolve destination → ReceiverAdaptor via destination_adaptor_mapping
 │   └── ActionDispatcher.java                      # Webhook delivery to mapped adaptor
 ├── kafka/
@@ -258,6 +258,7 @@ IntelligenceTriggerEvent
   ├── actionId ─────────────► FHIR about[1].display
   ├── stepState ────────────► FHIR extension (cce-step-state)
   ├── detectedAt ───────────► FHIR authoredOn
+  ├── eventPayload ─────────► If present AND actionType=ServiceRequest → passed through as-is (original FHIR payload from Compliance Service)
   ├── intelligenceEventId ───────► intelligence_delivery.intelligence_event_id (traceability)
   └── actionDefinitionId ──► intelligence_delivery.action_definition_id (traceability)
 ```
@@ -275,7 +276,8 @@ The trigger event's `actionType` carries the FHIR `ActivityDefinition.kind` valu
 | `CommunicationRequest` | `HIGH` or `CRITICAL` | `ESCALATION` | `CommunicationRequest` |
 | `CommunicationRequest` | `LOW` or `MEDIUM` | `NOTIFICATION` | `CommunicationRequest` |
 | `Task` | any | `COORDINATION` | `Task` |
-| `ServiceRequest` | any | `COORDINATION` | `Task` |
+| `ServiceRequest` (with `eventPayload`) | any | `COORDINATION` | **Passthrough** — original `eventPayload` from Compliance Service |
+| `ServiceRequest` (without `eventPayload`) | any | `COORDINATION` | `ServiceRequest` (built by FhirPayloadBuilder) |
 
 The mapped `ActionType` is stored in `intelligence_delivery.action_type` and used in the FHIR payload's `category` / `code` coding, the `contentString` summary, and the REST API response.
 
@@ -285,7 +287,8 @@ The mapped `ActionType` is stored in `intelligence_delivery.action_type` and use
 |---|---|---|
 | `NOTIFICATION` | `CommunicationRequest` | Standard FHIR resource for "send this message" semantics |
 | `ESCALATION` | `CommunicationRequest` | Same structure, differentiated by `priority` and `category` |
-| `COORDINATION` | `Task` | Standard FHIR resource for "perform this action" semantics |
+| `COORDINATION` (Task) | `Task` | Standard FHIR resource for "perform this action" semantics |
+| `COORDINATION` (ServiceRequest) | Passthrough / `ServiceRequest` | When `eventPayload` is present, the original FHIR payload from the Compliance Service is passed through as-is. Otherwise a `ServiceRequest` resource is built by `FhirPayloadBuilder`. |
 
 #### CommunicationRequest Payload (NOTIFICATION / ESCALATION)
 
@@ -386,7 +389,7 @@ The mapped `ActionType` is stored in `intelligence_delivery.action_type` and use
 | `subject` / `for` | Patient UPID | Patient UPID | `trigger.subject` |
 | `about` | Protocol + action ID | — | `trigger.protocolCanonical`, `trigger.actionId` |
 | `payload.contentString` / `description` | Auto-generated summary (includes stepState) | Auto-generated summary (includes stepState) | `FhirPayloadBuilder` |
-| `recipient` | Channel name | — | `trigger.intelligenceDestination` |
+| `recipient` | Destination name | — | `trigger.intelligenceDestination` |
 | `authoredOn` | Detection time | Detection time | `trigger.detectedAt` |
 | `extension.*` | Step state | Same | Trigger event fields |
 

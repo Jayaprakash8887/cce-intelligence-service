@@ -193,7 +193,7 @@ Tracks the **delivery lifecycle** of an intelligence action to a specific Receiv
 | `action_id` | `VARCHAR` | **NOT NULL** | — | PlanDefinition action ID (e.g., `anc-visit-2`). From trigger event `actionId`. |
 | `severity` | `VARCHAR` | **NOT NULL** | — | Intelligence severity. From trigger event `severity`. See [IntelligenceSeverity](#intelligenceseverity). |
 | `destination` | `VARCHAR` | **NOT NULL** | — | Intelligence destination (e.g., `supervisor`). From trigger event `intelligenceDestination`. |
-| `fhir_payload` | `JSONB` | **NOT NULL** | — | The FHIR R4 resource (CommunicationRequest or Task) sent to the adaptor. See [JSONB: fhir_payload](#intelligence_delivery--fhir_payload). |
+| `fhir_payload` | `JSONB` | **NOT NULL** | — | The FHIR R4 resource (CommunicationRequest, Task, or passthrough ServiceRequest payload) sent to the adaptor. See [JSONB: fhir_payload](#intelligence_delivery--fhir_payload). |
 | `delivery_result` | `JSONB` | Yes | — | Delivery response details (HTTP status, error message, attempts). See [JSONB: delivery_result](#intelligence_delivery--delivery_result). |
 | `attempt_count` | `INTEGER` | **NOT NULL** | `0` | Number of delivery attempts made. |
 | `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | When the intelligence delivery was created. |
@@ -284,7 +284,8 @@ Intelligence Service categorization of actions. **Mapped at consumption time** f
 | `CommunicationRequest` | `HIGH` or `CRITICAL` | `ESCALATION` | `CommunicationRequest` |
 | `CommunicationRequest` | `LOW` or `MEDIUM` | `NOTIFICATION` | `CommunicationRequest` |
 | `Task` | any | `COORDINATION` | `Task` |
-| `ServiceRequest` | any | `COORDINATION` | `Task` |
+| `ServiceRequest` (with `eventPayload`) | any | `COORDINATION` | **Passthrough** — original `eventPayload` from Compliance Service |
+| `ServiceRequest` (without `eventPayload`) | any | `COORDINATION` | `ServiceRequest` (built by FhirPayloadBuilder) |
 
 | Intelligence Type | FHIR Kind | Description |
 |---|---|---|
@@ -400,7 +401,9 @@ A **FHIR R4 Endpoint** resource describing the adaptor's identity, connection ty
 
 The FHIR R4-compliant resource sent to the Receiver Adaptor. Resource type depends on the trigger event's `actionType`:
 - `NOTIFICATION` / `ESCALATION` → `CommunicationRequest`
-- `COORDINATION` → `Task`
+- `COORDINATION` (Task) → `Task`
+- `COORDINATION` (ServiceRequest with `eventPayload`) → **Passthrough** — the original `eventPayload` from the Compliance Service is used as-is
+- `COORDINATION` (ServiceRequest without `eventPayload`) → `ServiceRequest` (built by `FhirPayloadBuilder`)
 
 ```json
 {
