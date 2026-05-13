@@ -284,3 +284,15 @@ GROUP BY ra.id, ra.name;
 |--------|------|------|-------------|
 | `cce.intelligence.adaptor.health` | Gauge | `adaptor_name`, `status` | 1 = healthy, 0.5 = degraded, 0 = unhealthy |
 | `cce.intelligence.adaptor.consecutive_failures` | Gauge | `adaptor_name` | Current consecutive failure count |
+
+---
+
+## 5. Cross-Service Dependencies
+
+### 5.1 Dead Column: intelligence_event_log.error_message (Compliance Service §2.6)
+
+The `intelligence_event_log` table (owned by Compliance Service, written by `IntelligenceActionEvaluator`) has a declared `error_message` TEXT column that is **never populated** — `setErrorMessage()` has zero call sites across the entire codebase.
+
+**Action:** This column will be dropped as part of **Compliance Service §2.6** (Flyway `V15__drop_dead_columns.sql`). The Intelligence Service does not read or write this column, so no code changes are required on this side.
+
+If error tracking for intelligence action evaluation is needed in the future, it should be implemented as a separate concern (e.g., structured error events on a Kafka DLQ or an `intelligence_error_log` table) rather than an unused nullable column.
