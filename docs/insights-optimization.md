@@ -2,7 +2,8 @@
 
 > **CCE Intelligence Service** — Pre-computed delivery metrics for the Insights Service  
 > **Status**: Proposed | **Target**: v1.2.0  
-> **Last Updated**: 2026-05-11
+> **Last Updated**: 2026-05-14  
+> **Deployment Model**: Fresh deployment (no existing data to migrate)
 
 ---
 
@@ -176,14 +177,16 @@ CREATE TABLE adaptor_health_snapshot (
 
 ### 2.3 Denormalize `facility_id` on `intelligence_delivery`
 
-**Problem:** Intelligence trigger events carry `facilityid` in the CloudEvents extension, but the `intelligence_delivery` table does not store it. The Insights Service would need to correlate deliveries with facilities by joining back to Compliance Service tables (`event_log` or `protocol_instance`), which crosses service boundaries.
+**Problem:** Intelligence trigger events carry `facilityid` in the CloudEvents extension, but the `intelligence_delivery` table does not store it. The Insights Service would need to correlate deliveries with facilities by joining back to Compliance Service tables (`compliance_event_log` or `protocol_instance`), which crosses service boundaries.
 
-**Solution:** Extract `facility_id` from the trigger event's CloudEvents envelope and persist it on `intelligence_delivery`.
+**Solution (fresh deploy):** Include `facility_id` on `intelligence_delivery` from the initial schema.
 
-**Schema change:**
+**Schema (included in initial `intelligence_delivery` DDL):**
 
 ```sql
-ALTER TABLE intelligence_delivery ADD COLUMN facility_id VARCHAR(100);
+-- Within CREATE TABLE intelligence_delivery:
+    facility_id VARCHAR(100),
+-- Index:
 CREATE INDEX idx_intelligence_delivery_facility ON intelligence_delivery (facility_id);
 ```
 
@@ -209,56 +212,9 @@ This also supports adding a `facility_id` column to `delivery_summary_daily` for
 - **`adaptor_health_snapshot`** — Updated synchronously on each delivery outcome. Health status is always current with the latest delivery result.
 - **`facility_id` denormalization** — Set at delivery creation time from the trigger event headers. Immutable once set.
 
-### 3.1 Backfill Strategy
+### 3.1 No Backfill Required
 
-```sql
--- delivery_summary_daily backfill
-INSERT INTO delivery_summary_daily (
-    summary_date, destination, receiver_adaptor_id, action_type, severity,
-    total_count, delivered_count, failed_count, cancelled_count,
-    total_attempts, total_latency_ms, min_latency_ms, max_latency_ms
-)
-SELECT
-    DATE(id.created_at),
-    id.destination,
-    dam.receiver_adaptor_id,
-    id.action_type,
-    id.severity,
-    COUNT(*),
-    COUNT(*) FILTER (WHERE id.status = 'DELIVERED'),
-    COUNT(*) FILTER (WHERE id.status = 'FAILED'),
-    COUNT(*) FILTER (WHERE id.status = 'CANCELLED'),
-    SUM(id.attempt_count),
-    SUM(EXTRACT(EPOCH FROM (id.delivered_at - id.created_at)) * 1000) FILTER (WHERE id.status = 'DELIVERED'),
-    MIN(EXTRACT(EPOCH FROM (id.delivered_at - id.created_at)) * 1000) FILTER (WHERE id.status = 'DELIVERED'),
-    MAX(EXTRACT(EPOCH FROM (id.delivered_at - id.created_at)) * 1000) FILTER (WHERE id.status = 'DELIVERED')
-FROM intelligence_delivery id
-JOIN destination_adaptor_mapping dam ON dam.id = id.destination_adaptor_mapping_id
-GROUP BY DATE(id.created_at), id.destination, dam.receiver_adaptor_id, id.action_type, id.severity;
-
--- adaptor_health_snapshot backfill
-INSERT INTO adaptor_health_snapshot (
-    receiver_adaptor_id, adaptor_name, active_destinations,
-    total_deliveries, successful_deliveries, failed_deliveries,
-    success_rate, last_delivery_at, last_failure_at
-)
-SELECT
-    ra.id,
-    ra.name,
-    (SELECT COUNT(*) FROM destination_adaptor_mapping dam WHERE dam.receiver_adaptor_id = ra.id AND dam.status = 'ACTIVE'),
-    COUNT(id.id),
-    COUNT(id.id) FILTER (WHERE id.status = 'DELIVERED'),
-    COUNT(id.id) FILTER (WHERE id.status = 'FAILED'),
-    CASE WHEN COUNT(id.id) > 0
-         THEN ROUND(COUNT(id.id) FILTER (WHERE id.status = 'DELIVERED') * 100.0 / COUNT(id.id), 2)
-         ELSE 100 END,
-    MAX(id.delivered_at),
-    MAX(id.updated_at) FILTER (WHERE id.status = 'FAILED')
-FROM receiver_adaptor ra
-LEFT JOIN destination_adaptor_mapping dam ON dam.receiver_adaptor_id = ra.id
-LEFT JOIN intelligence_delivery id ON id.destination_adaptor_mapping_id = dam.id
-GROUP BY ra.id, ra.name;
-```
+Since this is a fresh deployment with no existing data, all optimizations are included in the initial schema from day 1. Summary tables and health snapshots populate organically as deliveries are processed. No backfill migrations are needed.
 
 ---
 
@@ -268,15 +224,17 @@ GROUP BY ra.id, ra.name;
 |--------|------|-------|-----------|---------|
 | New `delivery_summary_daily` table | Table | New | Intelligence | Delivery create/complete/fail |
 | New `adaptor_health_snapshot` table | Table | New | Intelligence | Delivery complete/fail |
-| Add `facility_id` to `intelligence_delivery` | Column | Existing | Intelligence | Delivery creation |
+| Add `facility_id` to `intelligence_delivery` | Column | Included from day 1 | Intelligence | Delivery creation |
 
-### 4.1 Flyway Migration Plan
+### 4.1 Flyway Migration Plan (Fresh Deployment)
+
+All optimizations are included in the initial schema:
 
 | Order | Migration | Description |
 |-------|-----------|-------------|
-| V2 | `V2__create_delivery_summary_daily.sql` | Create table + indexes + backfill |
-| V3 | `V3__create_adaptor_health_snapshot.sql` | Create table + backfill |
-| V4 | `V4__add_facility_to_intelligence_delivery.sql` | Add column + index |
+| V1 | `V1__initial_schema.sql` | All core tables with `intelligence_delivery.facility_id` from day 1 |
+| V2 | `V2__create_delivery_summary_daily.sql` | Pre-computed delivery summary table |
+| V3 | `V3__create_adaptor_health_snapshot.sql` | Pre-computed adaptor health snapshot table |
 
 ### 4.2 Metrics Additions
 
@@ -291,8 +249,8 @@ GROUP BY ra.id, ra.name;
 
 ### 5.1 Dead Column: intelligence_event_log.error_message (Compliance Service §2.6)
 
-The `intelligence_event_log` table (owned by Compliance Service, written by `IntelligenceActionEvaluator`) has a declared `error_message` TEXT column that is **never populated** — `setErrorMessage()` has zero call sites across the entire codebase.
+The `intelligence_event_log` table (owned by Compliance Service, written by `IntelligenceActionEvaluator`) originally had a declared `error_message` TEXT column that was **never populated**.
 
-**Action:** This column will be dropped as part of **Compliance Service §2.6** (Flyway `V15__drop_dead_columns.sql`). The Intelligence Service does not read or write this column, so no code changes are required on this side.
+**Action (fresh deploy):** This column is simply **not included** in the initial `intelligence_event_log` DDL (see **Compliance Service §2.6**). The Intelligence Service does not read or write this column, so no code changes are required.
 
 If error tracking for intelligence action evaluation is needed in the future, it should be implemented as a separate concern (e.g., structured error events on a Kafka DLQ or an `intelligence_error_log` table) rather than an unused nullable column.
