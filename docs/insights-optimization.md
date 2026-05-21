@@ -2,7 +2,7 @@
 
 > **CCE Intelligence Service** — Pre-computed delivery metrics for the Insights Service  
 > **Status**: Proposed | **Target**: v1.2.0  
-> **Last Updated**: 2026-05-14  
+> **Last Updated**: 2025-05-28  
 > **Deployment Model**: Fresh deployment (no existing data to migrate)
 
 ---
@@ -21,7 +21,13 @@ The Insights Service currently has **no intelligence analytics endpoints**. Howe
 
 Without pre-computation, the Insights Service would need to run `GROUP BY` aggregations on the full `intelligence_delivery` table with JOINs to `destination_adaptor_mapping` and `receiver_adaptor` — reproducing the same scaling problems already identified in Collector and Compliance service tables.
 
-### 1.1 Anticipated Insights Queries
+### 1.1 Design Constraint: No Core Table Denormalization
+
+> **Customer directive:** Core operational tables must NOT be modified for insights purposes (e.g., no adding `facility_id` to `intelligence_delivery`). Instead, all insights data is served from **separate pre-computed tables** that are updated incrementally in real-time by service code.
+>
+> These pre-computed tables are **temporary** — they will be replaced by a dedicated data pipeline in a future release. The tables must be fully self-contained and droppable without affecting core delivery functionality.
+
+### 1.2 Anticipated Insights Queries
 
 | Query Category | Tables Involved | Expected Complexity |
 |----------------|-----------------|---------------------|
@@ -42,7 +48,7 @@ Without pre-computation, the Insights Service would need to run `GROUP BY` aggre
 
 **Problem:** Every dashboard query for delivery metrics would scan the full `intelligence_delivery` table. Delivery status distribution, success rates, and volume by destination/severity are the most common analytics queries, but they only change when new deliveries complete.
 
-**Solution:** Maintain a pre-aggregated daily summary table, updated incrementally on each delivery status change (DELIVERED or FAILED).
+**Solution:** Maintain a pre-aggregated daily summary table, updated incrementally on each delivery status change (DELIVERED or FAILED). The `facility_id` is captured from the Kafka trigger event headers (`ce_facilityid`) at creation time — eliminating the need to add it to `intelligence_delivery`.
 
 **Schema:**
 
@@ -50,9 +56,10 @@ Without pre-computation, the Insights Service would need to run `GROUP BY` aggre
 CREATE TABLE delivery_summary_daily (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     summary_date        DATE NOT NULL,
+    facility_id         VARCHAR(100),            -- captured from trigger event headers
     destination         VARCHAR(200) NOT NULL,
-    receiver_adaptor_id UUID,                    -- denormalized from mapping
-    action_type         VARCHAR(30) NOT NULL,     -- NOTIFICATION, ESCALATION, COORDINATION
+    receiver_adaptor_id UUID,                    -- resolved from mapping at delivery time
+    action_type         VARCHAR(30) NOT NULL,     -- CommunicationRequest, Task, ServiceRequest
     severity            VARCHAR(20) NOT NULL,     -- LOW, MEDIUM, HIGH, CRITICAL
     total_count         BIGINT NOT NULL DEFAULT 0,
     delivered_count     BIGINT NOT NULL DEFAULT 0,
@@ -63,10 +70,11 @@ CREATE TABLE delivery_summary_daily (
     min_latency_ms      BIGINT,
     max_latency_ms      BIGINT,
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (summary_date, destination, action_type, severity)
+    UNIQUE (summary_date, facility_id, destination, action_type, severity)
 );
 
 CREATE INDEX idx_delivery_daily_date ON delivery_summary_daily (summary_date);
+CREATE INDEX idx_delivery_daily_facility ON delivery_summary_daily (facility_id);
 CREATE INDEX idx_delivery_daily_dest ON delivery_summary_daily (destination);
 CREATE INDEX idx_delivery_daily_adaptor ON delivery_summary_daily (receiver_adaptor_id);
 ```
@@ -75,9 +83,9 @@ CREATE INDEX idx_delivery_daily_adaptor ON delivery_summary_daily (receiver_adap
 
 ```sql
 -- On delivery creation (PENDING)
-INSERT INTO delivery_summary_daily (summary_date, destination, receiver_adaptor_id, action_type, severity, total_count)
-VALUES (:date, :destination, :adaptorId, :actionType, :severity, 1)
-ON CONFLICT (summary_date, destination, action_type, severity)
+INSERT INTO delivery_summary_daily (summary_date, facility_id, destination, receiver_adaptor_id, action_type, severity, total_count)
+VALUES (:date, :facilityId, :destination, :adaptorId, :actionType, :severity, 1)
+ON CONFLICT (summary_date, facility_id, destination, action_type, severity)
 DO UPDATE SET
     total_count = delivery_summary_daily.total_count + 1,
     updated_at = now();
@@ -90,16 +98,16 @@ UPDATE delivery_summary_daily SET
     min_latency_ms = LEAST(min_latency_ms, :latencyMs),
     max_latency_ms = GREATEST(max_latency_ms, :latencyMs),
     updated_at = now()
-WHERE summary_date = :date AND destination = :destination
-  AND action_type = :actionType AND severity = :severity;
+WHERE summary_date = :date AND facility_id IS NOT DISTINCT FROM :facilityId
+  AND destination = :destination AND action_type = :actionType AND severity = :severity;
 
 -- On delivery failure (FAILED)
 UPDATE delivery_summary_daily SET
     failed_count = failed_count + 1,
     total_attempts = total_attempts + :attemptCount,
     updated_at = now()
-WHERE summary_date = :date AND destination = :destination
-  AND action_type = :actionType AND severity = :severity;
+WHERE summary_date = :date AND facility_id IS NOT DISTINCT FROM :facilityId
+  AND destination = :destination AND action_type = :actionType AND severity = :severity;
 ```
 
 **Insights Service query enablement:**
@@ -113,6 +121,7 @@ WHERE summary_date = :date AND destination = :destination
 | Avg webhook latency by destination | `SELECT destination, SUM(total_latency_ms)::float / NULLIF(SUM(delivered_count), 0) FROM delivery_summary_daily GROUP BY destination` |
 | Retry pressure (avg attempts) | `SELECT destination, SUM(total_attempts)::float / NULLIF(SUM(total_count), 0) FROM delivery_summary_daily GROUP BY destination` |
 | Volume by action type | `SELECT action_type, SUM(total_count) FROM delivery_summary_daily GROUP BY action_type` |
+| Deliveries by facility | `SELECT facility_id, SUM(total_count), SUM(delivered_count) FROM delivery_summary_daily WHERE facility_id IS NOT NULL GROUP BY facility_id` |
 
 ---
 
@@ -175,42 +184,11 @@ CREATE TABLE adaptor_health_snapshot (
 
 ---
 
-### 2.3 Denormalize `facility_id` on `intelligence_delivery`
-
-**Problem:** Intelligence trigger events carry `facilityid` in the CloudEvents extension, but the `intelligence_delivery` table does not store it. The Insights Service would need to correlate deliveries with facilities by joining back to Compliance Service tables (`compliance_event_log` or `protocol_instance`), which crosses service boundaries.
-
-**Solution (fresh deploy):** Include `facility_id` on `intelligence_delivery` from the initial schema.
-
-**Schema (included in initial `intelligence_delivery` DDL):**
-
-```sql
--- Within CREATE TABLE intelligence_delivery:
-    facility_id VARCHAR(100),
--- Index:
-CREATE INDEX idx_intelligence_delivery_facility ON intelligence_delivery (facility_id);
-```
-
-**Code change:** In `IntelligenceEngine.processTrigger()`, extract the facility ID from the Kafka message headers (`ce_facilityid`) and set it on the delivery record.
-
-**Impact:** Enables facility-scoped intelligence analytics without cross-service table reads:
-
-```sql
--- Deliveries by facility
-SELECT facility_id, COUNT(*), SUM(CASE WHEN status = 'DELIVERED' THEN 1 ELSE 0 END)
-FROM intelligence_delivery
-WHERE facility_id IS NOT NULL
-GROUP BY facility_id;
-```
-
-This also supports adding a `facility_id` column to `delivery_summary_daily` for facility-level pre-aggregation.
-
----
-
 ## 3. Consistency Guarantees
 
 - **`delivery_summary_daily`** — Updated synchronously in the same transaction as the delivery status update (Phase 3 of `ActionDispatcher`). No consistency lag between delivery table and summary.
 - **`adaptor_health_snapshot`** — Updated synchronously on each delivery outcome. Health status is always current with the latest delivery result.
-- **`facility_id` denormalization** — Set at delivery creation time from the trigger event headers. Immutable once set.
+- **`facility_id` in summary** — Captured at delivery creation time from the trigger event Kafka headers. Available for all facility-scoped analytics without modifying `intelligence_delivery`.
 
 ### 3.1 No Backfill Required
 
@@ -224,7 +202,8 @@ Since this is a fresh deployment with no existing data, all optimizations are in
 |--------|------|-------|-----------|---------|
 | New `delivery_summary_daily` table | Table | New | Intelligence | Delivery create/complete/fail |
 | New `adaptor_health_snapshot` table | Table | New | Intelligence | Delivery complete/fail |
-| Add `facility_id` to `intelligence_delivery` | Column | Included from day 1 | Intelligence | Delivery creation |
+
+> **Note:** No columns are added to the `intelligence_delivery` table. The `intelligence_delivery` schema remains unchanged. Facility-scoped analytics are served from `delivery_summary_daily.facility_id`.
 
 ### 4.1 Flyway Migration Plan (Fresh Deployment)
 
@@ -232,8 +211,8 @@ All optimizations are included in the initial schema:
 
 | Order | Migration | Description |
 |-------|-----------|-------------|
-| V1 | `V1__initial_schema.sql` | All core tables with `intelligence_delivery.facility_id` from day 1 |
-| V2 | `V2__create_delivery_summary_daily.sql` | Pre-computed delivery summary table |
+| V1 | `V1__initial_schema.sql` | All core tables with original schema (no insights columns) |
+| V2 | `V2__create_delivery_summary_daily.sql` | Pre-computed delivery summary table (includes facility_id) |
 | V3 | `V3__create_adaptor_health_snapshot.sql` | Pre-computed adaptor health snapshot table |
 
 ### 4.2 Metrics Additions
@@ -247,10 +226,19 @@ All optimizations are included in the initial schema:
 
 ## 5. Cross-Service Dependencies
 
-### 5.1 Dead Column: intelligence_event_log.error_message (Compliance Service §2.6)
+### 5.1 Dead Column: intelligence_event_log.error_message (Compliance Service §2.5)
 
 The `intelligence_event_log` table (owned by Compliance Service, written by `IntelligenceActionEvaluator`) originally had a declared `error_message` TEXT column that was **never populated**.
 
-**Action (fresh deploy):** This column is simply **not included** in the initial `intelligence_event_log` DDL (see **Compliance Service §2.6**). The Intelligence Service does not read or write this column, so no code changes are required.
+**Action (fresh deploy):** This column is simply **not included** in the initial `intelligence_event_log` DDL (see **Compliance Service §2.5**). The Intelligence Service does not read or write this column, so no code changes are required.
 
-If error tracking for intelligence action evaluation is needed in the future, it should be implemented as a separate concern (e.g., structured error events on a Kafka DLQ or an `intelligence_error_log` table) rather than an unused nullable column.
+---
+
+## 6. Future: Data Pipeline Replacement
+
+All pre-computed tables defined in this document are **temporary**. They will be replaced by a dedicated data pipeline in a future release. When the data pipeline is implemented:
+
+1. Drop the pre-computed tables (`delivery_summary_daily`, `adaptor_health_snapshot`)
+2. Remove the corresponding repository, entity, and service code
+3. Core `intelligence_delivery` table remains completely unchanged — no rollback needed
+4. The Insights Service switches from querying pre-computed tables to querying the data warehouse

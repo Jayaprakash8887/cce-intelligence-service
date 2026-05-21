@@ -140,14 +140,6 @@ public class ActionDispatcher {
 
     private ActionType resolveActionType(IntelligenceTriggerEvent event) {
         String fhirKind = event.getActionType();
-        String severity = event.getSeverity();
-
-        if ("Task".equals(fhirKind) || "ServiceRequest".equals(fhirKind)) {
-            return ActionType.COORDINATION;
-        }
-        if ("HIGH".equalsIgnoreCase(severity) || "CRITICAL".equalsIgnoreCase(severity)) {
-            return ActionType.ESCALATION;
-        }
-        return ActionType.NOTIFICATION;
+        return ActionType.valueOf(fhirKind);
     }
 }

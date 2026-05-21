@@ -36,7 +36,7 @@ Intelligence Deliveries track the **delivery lifecycle** of fired intelligence a
 | `subject` | `String` | No | Filter by patient UPID |
 | `intelligenceEventId` | `UUID` | No | Filter by intelligence event |
 | `actionDefinitionId` | `UUID` | No | Filter by action definition |
-| `actionType` | `String` | No | Filter by action type: `NOTIFICATION`, `ESCALATION`, `COORDINATION` |
+| `actionType` | `String` | No | Filter by action type: `CommunicationRequest`, `Task`, `ServiceRequest` |
 | `severity` | `String` | No | Filter by severity: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
 | `destination` | `String` | No | Filter by destination name (e.g., `supervisor`) |
 | `page` | `int` | No | Page number (0-based, default: `0`) |
@@ -51,7 +51,7 @@ Intelligence Deliveries track the **delivery lifecycle** of fired intelligence a
       "id": "b2c3d4e5-0001-4000-b000-000000000001",
       "intelligenceEventId": "990e8400-e29b-41d4-a716-446655440010",
       "actionDefinitionId": "a1b2c3d4-0001-4000-a000-000000000001",
-      "actionType": "NOTIFICATION",
+      "actionType": "CommunicationRequest",
       "actionId": "anc-visit-2",
       "destination": "supervisor",
       "destinationAdaptorMappingId": "d4e5f6a7-0001-4000-d000-000000000010",
@@ -94,7 +94,7 @@ Intelligence Deliveries track the **delivery lifecycle** of fired intelligence a
     "id": "b2c3d4e5-0001-4000-b000-000000000001",
     "intelligenceEventId": "990e8400-e29b-41d4-a716-446655440010",
     "actionDefinitionId": "a1b2c3d4-0001-4000-a000-000000000001",
-    "actionType": "NOTIFICATION",
+    "actionType": "CommunicationRequest",
     "actionId": "anc-visit-2",
     "destination": "supervisor",
     "destinationAdaptorMappingId": "d4e5f6a7-0001-4000-d000-000000000010",
@@ -108,9 +108,9 @@ Intelligence Deliveries track the **delivery lifecycle** of fired intelligence a
       "resourceType": "CommunicationRequest",
       "status": "active",
       "priority": "urgent",
-      "category": [{ "coding": [{ "system": "http://openphc.org/fhir/CodeSystem/cce-action-type", "code": "NOTIFICATION" }] }],
+      "category": [{ "coding": [{ "system": "http://openphc.org/fhir/CodeSystem/cce-action-type", "code": "CommunicationRequest" }] }],
       "subject": { "identifier": { "system": "http://openphc.org/fhir/patient-upid", "value": "260225-0002-5501" } },
-      "payload": [{ "contentString": "[HIGH] NOTIFICATION for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)" }]
+      "payload": [{ "contentString": "[HIGH] CommunicationRequest for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)" }]
     },
     "deliveryResult": {
       "httpStatus": 200,

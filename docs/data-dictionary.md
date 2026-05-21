@@ -186,7 +186,7 @@ Tracks the **delivery lifecycle** of an intelligence action to a specific Receiv
 | `intelligence_event_id` | `UUID` | **NOT NULL** | — | Compliance Service's `intelligence_event_log.id`. Idempotency anchor. Stored for traceability, not used as a runtime FK. |
 | `action_definition_id` | `UUID` | **NOT NULL** | — | Compliance Service's `action_definition.id`. Stored for traceability, not used as a runtime FK. |
 | `destination_adaptor_mapping_id` | `UUID` | Yes | — | FK → `destination_adaptor_mapping.id`. Which mapping routed this delivery. `NULL` if no matching mapping found. |
-| `action_type` | `VARCHAR` | **NOT NULL** | — | Intelligence Service action type: `NOTIFICATION`, `ESCALATION`, or `COORDINATION`. Mapped at consumption time from the trigger event's `actionType` (FHIR `ActivityDefinition.kind`): `CommunicationRequest` + HIGH/CRITICAL → ESCALATION, `CommunicationRequest` + LOW/MEDIUM → NOTIFICATION, `Task`/`ServiceRequest` → COORDINATION. Determines FHIR payload resource type. |
+| `action_type` | `VARCHAR` | **NOT NULL** | — | FHIR resource type stored directly from the trigger event's `actionType` (FHIR `ActivityDefinition.kind`): `CommunicationRequest`, `Task`, or `ServiceRequest`. Determines FHIR payload resource type. |
 | `status` | `VARCHAR` | **NOT NULL** | — | Delivery status. See [IntelligenceDeliveryStatus](#intelligencedeliverystatus). |
 | `subject` | `VARCHAR` | **NOT NULL** | — | Patient UPID. From trigger event `subject`. |
 | `protocol_canonical` | `VARCHAR` | **NOT NULL** | — | Protocol `url\|version`. From trigger event `protocolCanonical`. |
@@ -207,7 +207,7 @@ Tracks the **delivery lifecycle** of an intelligence action to a specific Receiv
 | Primary Key | `intelligence_delivery_pkey` | `id` |
 | Foreign Key | `intelligence_delivery_destination_adaptor_mapping_id_fkey` | `destination_adaptor_mapping_id` → `destination_adaptor_mapping(id)` |
 | Unique | `intelligence_delivery_event_mapping_key` | `(intelligence_event_id, destination_adaptor_mapping_id)` — Idempotency guard. One delivery per intelligence event per destination mapping. **Note:** PostgreSQL treats NULLs as distinct in unique constraints, so multiple rows with `destination_adaptor_mapping_id = NULL` for the same `intelligence_event_id` will not conflict. |
-| Check | — | `action_type IN ('NOTIFICATION', 'ESCALATION', 'COORDINATION')` |
+| Check | — | `action_type IN ('CommunicationRequest', 'Task', 'ServiceRequest')` |
 | Check | — | `status IN ('PENDING', 'EXECUTING', 'DELIVERED', 'FAILED', 'CANCELLED')` |
 | Check | — | `severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')` |
 | B-tree Index | `idx_intelligence_delivery_intelligence_event` | `intelligence_event_id` — Lookup all deliveries for an intelligence event. |
@@ -277,21 +277,14 @@ The `intelligence_event_id` and `action_definition_id` columns on `intelligence_
 
 ### ActionType
 
-Intelligence Service categorization of actions. **Mapped at consumption time** from the trigger event's `actionType` (FHIR `ActivityDefinition.kind`) combined with `severity`:
+Stored directly from the trigger event's `actionType` field — the FHIR `ActivityDefinition.kind` value. No secondary mapping is applied.
 
-| Trigger `actionType` (FHIR kind) | Severity | Intelligence `ActionType` | FHIR Payload Resource |
-|---|---|---|---|
-| `CommunicationRequest` | `HIGH` or `CRITICAL` | `ESCALATION` | `CommunicationRequest` |
-| `CommunicationRequest` | `LOW` or `MEDIUM` | `NOTIFICATION` | `CommunicationRequest` |
-| `Task` | any | `COORDINATION` | `Task` |
-| `ServiceRequest` (with `eventPayload`) | any | `COORDINATION` | **Passthrough** — original `eventPayload` from Compliance Service |
-| `ServiceRequest` (without `eventPayload`) | any | `COORDINATION` | `ServiceRequest` (built by FhirPayloadBuilder) |
-
-| Intelligence Type | FHIR Kind | Description |
+| `action_type` Value | FHIR Payload Resource | Description |
 |---|---|---|
-| `NOTIFICATION` | `CommunicationRequest` | Alert, reminder, or notification |
-| `ESCALATION` | `CommunicationRequest` | Elevated alert to supervisor/authority (differentiated by severity) |
-| `COORDINATION` | `Task` / `ServiceRequest` | Cross-system task creation or referral |
+| `CommunicationRequest` | `CommunicationRequest` | Alert, reminder, or notification |
+| `Task` | `Task` | Cross-system task creation |
+| `ServiceRequest` (with `eventPayload`) | **Passthrough** — original `eventPayload` from Compliance Service | Referral or lab order |
+| `ServiceRequest` (without `eventPayload`) | `ServiceRequest` (built by FhirPayloadBuilder) | Referral or lab order |
 
 ### ConnectionType (FHIR Endpoint)
 

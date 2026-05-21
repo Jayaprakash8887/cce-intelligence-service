@@ -176,7 +176,7 @@ class IntelligenceEndToEndIntegrationTest {
 
     @Test
     @Order(2)
-    void testEscalationCriticalPriority() {
+    void testCommunicationRequestCriticalPriority() {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "CRITICAL", "CommunicationRequest", "action-overdue-check");
         consumer.consume(event);
 
@@ -186,7 +186,7 @@ class IntelligenceEndToEndIntegrationTest {
 
     @Test
     @Order(3)
-    void testCoordinationTriggerBuildsFhirTask() {
+    void testTaskTriggerBuildsFhirTask() {
         IntelligenceTriggerEvent event = buildTriggerEvent(UUID.randomUUID(), "overdue", "HIGH", "Task", "action-overdue-check");
         consumer.consume(event);
 

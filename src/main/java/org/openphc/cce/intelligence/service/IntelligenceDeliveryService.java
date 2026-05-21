@@ -53,7 +53,7 @@ public class IntelligenceDeliveryService {
             spec = spec.and((root, query, cb) -> cb.equal(root.get("actionDefinitionId"), actionDefinitionId));
         }
         if (actionType != null) {
-            ActionType type = ActionType.valueOf(actionType.toUpperCase());
+            ActionType type = ActionType.valueOf(actionType);
             spec = spec.and((root, query, cb) -> cb.equal(root.get("actionType"), type));
         }
         if (severity != null) {

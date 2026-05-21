@@ -185,8 +185,8 @@ flowchart LR
     TE["TriggerEvent fields<br/>actionType, severity, intelligenceDestination,<br/>subject, eventPayload, etc."] --> FB[FhirPayloadBuilder]
     DRI["IntelligenceDelivery ID"] --> FB
     AT{"ActionType?"} --> FB
-    FB -->|NOTIFICATION / ESCALATION| CR["FHIR CommunicationRequest"]
-    FB -->|COORDINATION Task| TK["FHIR Task"]
+    FB -->|CommunicationRequest| CR["FHIR CommunicationRequest"]
+    FB -->|Task| TK["FHIR Task"]
     FB -->|"ServiceRequest + eventPayload"| PT["Passthrough:<br/>Original eventPayload as-is"]
     FB -->|"ServiceRequest (no eventPayload)"| SR["FHIR ServiceRequest (built)"]
     CR --> H[HTTP POST Body]
