@@ -83,7 +83,7 @@ CREATE TABLE intelligence_delivery (
     CONSTRAINT intelligence_delivery_event_mapping_key
         UNIQUE (intelligence_event_id, destination_adaptor_mapping_id),
     CONSTRAINT intelligence_delivery_action_type_check
-        CHECK (action_type IN ('NOTIFICATION', 'ESCALATION', 'COORDINATION')),
+        CHECK (action_type IN ('CommunicationRequest', 'Task', 'ServiceRequest')),
     CONSTRAINT intelligence_delivery_status_check
         CHECK (status IN ('PENDING', 'EXECUTING', 'DELIVERED', 'FAILED', 'CANCELLED')),
     CONSTRAINT intelligence_delivery_severity_check

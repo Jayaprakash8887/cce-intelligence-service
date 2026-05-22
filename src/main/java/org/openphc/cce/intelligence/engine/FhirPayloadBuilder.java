@@ -21,8 +21,9 @@ public class FhirPayloadBuilder {
 
     /**
      * Builds a FHIR R4-compliant payload from the trigger event.
-     * NOTIFICATION/ESCALATION → CommunicationRequest
-     * COORDINATION → Task
+     * CommunicationRequest → FHIR CommunicationRequest
+     * Task → FHIR Task
+     * ServiceRequest (with eventPayload) → passthrough
      */
     public JsonNode buildPayload(IntelligenceTriggerEvent event, UUID intelligenceDeliveryId) {
         String actionType = event.getActionType();
@@ -108,8 +109,8 @@ public class FhirPayloadBuilder {
         ArrayNode codings = code.putArray("coding");
         ObjectNode coding = codings.addObject();
         coding.put("system", "http://openphc.org/fhir/CodeSystem/cce-action-type");
-        coding.put("code", "COORDINATION");
-        coding.put("display", "Coordination");
+        coding.put("code", "Task");
+        coding.put("display", "Task");
 
         // For (subject - FHIR identifier-based reference)
         ObjectNode forRef = resource.putObject("for");
@@ -147,8 +148,8 @@ public class FhirPayloadBuilder {
         ArrayNode codings = code.putArray("coding");
         ObjectNode coding = codings.addObject();
         coding.put("system", "http://openphc.org/fhir/CodeSystem/cce-action-type");
-        coding.put("code", "ESCALATION");
-        coding.put("display", "Referral Escalation");
+        coding.put("code", "ServiceRequest");
+        coding.put("display", "ServiceRequest");
 
         // Subject (FHIR identifier-based reference)
         ObjectNode subject = resource.putObject("subject");
@@ -196,17 +197,7 @@ public class FhirPayloadBuilder {
     }
 
     private String resolveActionType(IntelligenceTriggerEvent event) {
-        String fhirKind = event.getActionType();
-        String severity = event.getSeverity();
-
-        if ("Task".equals(fhirKind) || "ServiceRequest".equals(fhirKind)) {
-            return "COORDINATION";
-        }
-        // CommunicationRequest
-        if ("HIGH".equalsIgnoreCase(severity) || "CRITICAL".equalsIgnoreCase(severity)) {
-            return "ESCALATION";
-        }
-        return "NOTIFICATION";
+        return event.getActionType();
     }
 
     private String buildSummary(IntelligenceTriggerEvent event) {

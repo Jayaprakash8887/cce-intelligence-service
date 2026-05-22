@@ -169,7 +169,7 @@ src/main/java/org/openphc/cce/intelligence/
 │   │   └── IntelligenceDeliveryAuditLog.java                  # Audit trail entry
 │   ├── enums/
 │   │   ├── IntelligenceDeliveryStatus.java                 # PENDING, EXECUTING, DELIVERED, FAILED, CANCELLED
-│   │   ├── ActionType.java                        # NOTIFICATION, ESCALATION, COORDINATION
+│   │   ├── ActionType.java                        # CommunicationRequest, Task, ServiceRequest
 │   │   └── IntelligenceSeverity.java              # LOW, MEDIUM, HIGH, CRITICAL
 │   └── repository/
 │       ├── IntelligenceDeliveryRepository.java
@@ -250,8 +250,8 @@ The trigger event is **self-contained** — all fields needed for routing and FH
 
 ```
 IntelligenceTriggerEvent
-  ├── actionType ───────────► FHIR kind (CommunicationRequest / Task / ServiceRequest) → mapped to Intelligence ActionType (NOTIFICATION / ESCALATION / COORDINATION)
-  ├── severity ─────────────► FHIR priority mapping + extension; also used in actionType mapping (CommunicationRequest + HIGH/CRITICAL = ESCALATION, otherwise NOTIFICATION)
+  ├── actionType ───────────► FHIR kind (CommunicationRequest / Task / ServiceRequest) — stored directly as ActionType
+  ├── severity ─────────────► FHIR priority mapping + extension
   ├── intelligenceDestination ► Routing lookup (destination_adaptor_mapping) + FHIR recipient
   ├── subject ──────────────► FHIR subject.identifier
   ├── protocolCanonical ────► FHIR about[0].reference
@@ -267,30 +267,28 @@ IntelligenceTriggerEvent
 
 The `FhirPayloadBuilder` constructs **FHIR R4-compliant payloads** directly from the trigger event fields. All structured data the receiver needs is in standard FHIR fields and CCE extensions. A default human-readable summary is generated for `payload.contentString` / `description`.
 
-#### ActionType Mapping
+#### ActionType
 
-The trigger event's `actionType` carries the FHIR `ActivityDefinition.kind` value (`CommunicationRequest`, `Task`, `ServiceRequest`). The Intelligence Service maps this to its own semantic `ActionType` at consumption time:
+The trigger event's `actionType` carries the FHIR `ActivityDefinition.kind` value (`CommunicationRequest`, `Task`, `ServiceRequest`). This value is stored directly as the `intelligence_delivery.action_type` — no secondary mapping is applied.
 
-| Trigger Event `actionType` | Severity | Intelligence `ActionType` | FHIR Payload Resource |
-|---|---|---|---|
-| `CommunicationRequest` | `HIGH` or `CRITICAL` | `ESCALATION` | `CommunicationRequest` |
-| `CommunicationRequest` | `LOW` or `MEDIUM` | `NOTIFICATION` | `CommunicationRequest` |
-| `Task` | any | `COORDINATION` | `Task` |
-| `ServiceRequest` (with `eventPayload`) | any | `COORDINATION` | **Passthrough** — original `eventPayload` from Compliance Service |
-| `ServiceRequest` (without `eventPayload`) | any | `COORDINATION` | `ServiceRequest` (built by FhirPayloadBuilder) |
+| `actionType` Value | FHIR Payload Resource | Description |
+|---|---|---|
+| `CommunicationRequest` | `CommunicationRequest` | Alert, reminder, or notification |
+| `Task` | `Task` | Cross-system task creation |
+| `ServiceRequest` (with `eventPayload`) | **Passthrough** — original `eventPayload` from Compliance Service | Referral or lab order |
+| `ServiceRequest` (without `eventPayload`) | `ServiceRequest` (built by FhirPayloadBuilder) | Referral or lab order |
 
-The mapped `ActionType` is stored in `intelligence_delivery.action_type` and used in the FHIR payload's `category` / `code` coding, the `contentString` summary, and the REST API response.
+The `actionType` is used in the FHIR payload's `category` / `code` coding, the `contentString` summary, and the REST API response.
 
 #### Payload Resource Types
 
 | Action Type | FHIR Resource | Rationale |
 |---|---|---|
-| `NOTIFICATION` | `CommunicationRequest` | Standard FHIR resource for "send this message" semantics |
-| `ESCALATION` | `CommunicationRequest` | Same structure, differentiated by `priority` and `category` |
-| `COORDINATION` (Task) | `Task` | Standard FHIR resource for "perform this action" semantics |
-| `COORDINATION` (ServiceRequest) | Passthrough / `ServiceRequest` | When `eventPayload` is present, the original FHIR payload from the Compliance Service is passed through as-is. Otherwise a `ServiceRequest` resource is built by `FhirPayloadBuilder`. |
+| `CommunicationRequest` | `CommunicationRequest` | Standard FHIR resource for "send this message" semantics |
+| `Task` | `Task` | Standard FHIR resource for "perform this action" semantics |
+| `ServiceRequest` | Passthrough / `ServiceRequest` | When `eventPayload` is present, the original FHIR payload from the Compliance Service is passed through as-is. Otherwise a `ServiceRequest` resource is built by `FhirPayloadBuilder`. |
 
-#### CommunicationRequest Payload (NOTIFICATION / ESCALATION)
+#### CommunicationRequest Payload
 
 ```json
 {
@@ -304,8 +302,8 @@ The mapped `ActionType` is stored in `intelligence_delivery.action_type` and use
   "category": [{
     "coding": [{
       "system": "http://openphc.org/fhir/CodeSystem/cce-action-type",
-      "code": "ESCALATION",
-      "display": "Escalation"
+      "code": "CommunicationRequest",
+      "display": "CommunicationRequest"
     }]
   }],
   "subject": {
@@ -316,7 +314,7 @@ The mapped `ActionType` is stored in `intelligence_delivery.action_type` and use
     { "display": "anc-visit-2" }
   ],
   "payload": [{
-    "contentString": "[HIGH] ESCALATION for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)"
+    "contentString": "[HIGH] CommunicationRequest for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)"
   }],
   "recipient": [{ "display": "supervisor" }],
   "authoredOn": "2026-04-15T00:00:05Z",
@@ -337,7 +335,7 @@ The mapped `ActionType` is stored in `intelligence_delivery.action_type` and use
 }
 ```
 
-#### Task Payload (COORDINATION)
+#### Task Payload
 
 ```json
 {
@@ -352,11 +350,11 @@ The mapped `ActionType` is stored in `intelligence_delivery.action_type` and use
   "code": {
     "coding": [{
       "system": "http://openphc.org/fhir/CodeSystem/cce-action-type",
-      "code": "COORDINATION",
-      "display": "Coordination"
+      "code": "Task",
+      "display": "Task"
     }]
   },
-  "description": "[CRITICAL] COORDINATION for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)",
+  "description": "[CRITICAL] Task for patient 260225-0002-5501 — step anc-visit-2 overdue (PlanDefinition/anc-high-risk|2.1)",
   "for": {
     "identifier": { "system": "http://openphc.org/fhir/patient-upid", "value": "260225-0002-5501" }
   },
