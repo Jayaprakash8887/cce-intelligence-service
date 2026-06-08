@@ -1,6 +1,6 @@
 -- ============================================================================
 -- V1: Intelligence Service Schema
--- Database: cce_collector (shared with Compliance Service)
+-- Database: ccedb (shared with Compliance Service)
 -- Tables: receiver_adaptor, destination_adaptor_mapping, intelligence_delivery,
 --         intelligence_delivery_audit_log
 -- ============================================================================
